@@ -1,0 +1,6 @@
+{
+  "name": "Patent–Product Intelligence Engine",
+  "description": "AI-assisted IP intelligence system for preliminary client patent retrieval, claim decomposition, technology clustering, and investigation prioritization using Google ADK and the Google Patents Public Dataset.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
