@@ -1567,7 +1567,7 @@ export default function App() {
                       {highPriorityCount}
                     </span>
                     <span className="text-xs text-slate-600">
-                      of {pipelineData.patents.length} returned ({Math.max(pipelineData.patents.length, pipelineData.staged_retrieval_metrics?.stage2_total_portfolio_records ?? pipelineData.patents.length)} portfolio filings screened)
+                      of {pipelineData.patents.length} shortlisted ({pipelineData.staged_retrieval_metrics?.stage2_total_portfolio_records ?? pipelineData.patents.length} screened)
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-500">
