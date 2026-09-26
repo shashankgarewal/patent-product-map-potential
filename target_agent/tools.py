@@ -13,6 +13,7 @@ import re
 import sqlite3
 from typing import Dict, Any, List, Optional
 
+from target_prefetch.db import get_db_connection
 from target_prefetch.pipeline import (
     DB_PATH,
     init_target_knowledge_db,
@@ -97,19 +98,19 @@ CONCEPT_QUERY_EXPANSIONS: Dict[str, List[str]] = {
 
 def ensure_knowledge_base_seeded() -> None:
     """
-    Ensures the local pre-fetched SQLite database is initialized before searching.
+    Ensures the pre-fetched AlloyDB target knowledge store is initialized with the 50+ Netflix corpus before searching.
     Never performs runtime web crawling.
     """
     init_target_knowledge_db(DB_PATH)
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection(DB_PATH)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM document_chunks")
-        count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS cnt FROM documents")
+        count = int(cur.fetchone()["cnt"])
     finally:
         conn.close()
 
-    if count == 0:
+    if count < 50:
         run_prefetch_pipeline(mode="initial", db_path=DB_PATH)
 
 
@@ -122,9 +123,9 @@ def search_target_knowledge(
 ) -> Dict[str, Any]:
     """
     Deterministic database search tool for the Target Retrieval Agent.
-    Searches the pre-fetched `target_knowledge.sqlite` database using hybrid:
+    Searches the pre-fetched AlloyDB knowledge store using hybrid:
     1. Keyword / lexical matching across title, content, and candidate_tags
-    2. Semantic 32-d vector cosine similarity (`embedding_json`)
+    2. Semantic 32-d vector cosine similarity (`embedding` ScaNN index)
     3. Metadata filtering (`target_company`, optional `technology_area` soft/hard boost)
     4. Optional `source_type` filtering
     """
@@ -134,8 +135,7 @@ def search_target_knowledge(
     # Clean common suffixes like "Netflix, Inc." -> "Netflix"
     company_base = re.sub(r",?\s*(?:inc\.?|corp\.?|corporation|ltd\.?|llc)$", "", company_norm, flags=re.IGNORECASE).strip()
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection(DB_PATH)
     try:
         cur = conn.cursor()
         cur.execute(

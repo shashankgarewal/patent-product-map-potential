@@ -139,10 +139,6 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    executePipeline("Apple", "video streaming");
-  }, []);
-
   const filteredPatents = useMemo(() => {
     if (!pipelineData?.patents) return [];
     let list = [...pipelineData.patents];
@@ -711,6 +707,400 @@ export default function App() {
               technologyAreaDefault={technologyArea}
               clientPatents={pipelineData?.patents || []}
             />
+          ) : !pipelineData ? (
+            <div className="space-y-5">
+              {/* =================================================================
+                  DEFAULT LANDING STATE: TECHNICAL SPECIFICATION & WORKFLOW BLUEPRINT
+                  (Displayed before user presses "Analyze Client Patent Portfolio")
+                 ================================================================= */}
+              <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-2xs">
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1.5 font-mono font-semibold text-slate-800 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            loading ? "bg-blue-600 animate-ping" : "bg-amber-500"
+                          }`}
+                        ></span>
+                        {loading
+                          ? "EXECUTING ADK PIPELINE..."
+                          : "STANDBY · AWAITING PORTFOLIO ANALYSIS"}
+                      </span>
+                      <span className="text-slate-400">·</span>
+                      <span className="font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-semibold">
+                        SPEC-PPI-2026 · SYSTEM ARCHITECTURE & WORKFLOW SPECIFICATION
+                      </span>
+                    </div>
+
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">
+                      Patent–Product Intelligence Engine: Technical Workflow Specification
+                    </h2>
+
+                    <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
+                      No portfolio analysis has been executed yet. Configure the{" "}
+                      <strong className="font-semibold text-slate-900">Client / Patent Owner</strong>,{" "}
+                      <strong className="font-semibold text-slate-900">Target Company</strong>, and optional{" "}
+                      <strong className="font-semibold text-slate-900">Technology Area / Niche</strong> in the left
+                      initiation panel and press{" "}
+                      <span className="font-mono font-semibold text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">
+                        Analyze Client Patent Portfolio
+                      </span>{" "}
+                      to execute the staged Google ADK pipeline and generate the analysis dossier.
+                    </p>
+                  </div>
+
+                  <div className="shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => executePipeline()}
+                      disabled={loading}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#080C14] hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      <span>
+                        {loading
+                          ? "Executing ADK Pipeline..."
+                          : `Analyze ${clientCompany || "Client"} Patent Portfolio`}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4 Architectural Invariants Strip */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+                  <div className="border border-slate-200/90 rounded-lg p-3 bg-slate-50/50 space-y-1">
+                    <div className="text-[10px] font-mono font-bold tracking-wider text-blue-700 uppercase">
+                      INVARIANT 01 · STAGED RETRIEVAL
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">
+                      BigQuery 3-Stage Funnel
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Never dumps entire portfolios into LLM context; resolves assignee, filters CPC/metadata, then fetches claims for top candidates.
+                    </p>
+                  </div>
+
+                  <div className="border border-slate-200/90 rounded-lg p-3 bg-slate-50/50 space-y-1">
+                    <div className="text-[10px] font-mono font-bold tracking-wider text-emerald-700 uppercase">
+                      INVARIANT 02 · OFFLINE TARGET DB
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">
+                      AlloyDB ScaNN + Medium MCP
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Zero runtime web crawling. Pre-fetches 62 Netflix docs (45 via Medium MCP Server) into AlloyDB `vector(32)` tables.
+                    </p>
+                  </div>
+
+                  <div className="border border-slate-200/90 rounded-lg p-3 bg-slate-50/50 space-y-1">
+                    <div className="text-[10px] font-mono font-bold tracking-wider text-indigo-700 uppercase">
+                      INVARIANT 03 · DUAL EVALUATION
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">
+                      Technical ≠ Commercial Score
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Evaluates Claim-Element Technical Overlap and Public 10-K Commercial Opportunity as orthogonal dimensions.
+                    </p>
+                  </div>
+
+                  <div className="border border-slate-200/90 rounded-lg p-3 bg-slate-50/50 space-y-1">
+                    <div className="text-[10px] font-mono font-bold tracking-wider text-amber-800 uppercase">
+                      INVARIANT 04 · LEGAL POSITIONING
+                    </div>
+                    <div className="text-xs font-bold text-slate-900">
+                      Non-Infringement Guardrail
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-normal">
+                      Preliminary technical screening only. Enforces strict evidence provenance and flags unconfirmed claim elements.
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              {/* =================================================================
+                  END-TO-END 3-PIPELINE ARCHITECTURAL WORKFLOW SPECIFICATION
+                 ================================================================= */}
+              <section className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                {/* PIPELINE 1: CLIENT PATENT PIPELINE */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs flex flex-col justify-between">
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded">
+                        PIPELINE 01 · CLIENT PATENT INTELLIGENCE
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-400">adk_pipeline/</span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        Google Patents BigQuery & ADK Claim Analysis
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                        Source: patents-public-data.patents.publications
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Stage 1 · Assignee Disambiguation
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Resolves <span className="font-mono">client_company</span> against{" "}
+                          <span className="font-mono">assignee_harmonized.name</span> and raw aliases. Halts with candidate selector if multiple distinct corporate entities match.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Stage 2 · Metadata & CPC Subgroup Filter
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Screens active utility grants (<span className="font-mono">B2/B1</span>) and applications (<span className="font-mono">A1</span>) across title, abstract, and CPC classifications (<span className="font-mono">H04N21/</span>, <span className="font-mono">H04N19/</span>, <span className="font-mono">H04L65/</span>).
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Stage 3 · Claim Element Decomposition
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Extracts verbatim independent claims, decomposes limitations into atomic elements (<span className="font-mono">1A, 1B, 1C, 1D</span>), separates <strong>Source Facts</strong> from <strong>AI Interpretation</strong>, and computes 20-year remaining term from <span className="font-mono">filing_date</span>.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 font-mono text-[11px] text-slate-600 flex items-center justify-between">
+                    <span>ADK: root → retrieval → analysis → ranking</span>
+                    <span className="text-blue-700 font-bold">STEP 1</span>
+                  </div>
+                </div>
+
+                {/* PIPELINE 2: OFFLINE TARGET KNOWLEDGE & RETRIEVAL PIPELINE */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs flex flex-col justify-between">
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded">
+                        PIPELINE 02 · TARGET KNOWLEDGE & ADK RETRIEVAL
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-400">target_prefetch/</span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        AlloyDB ScaNN Store & Medium MCP Server
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                        MCP: https://mcpmarket.com/server/medium-2
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          1. Medium MCP Server (JSON-RPC 2.0)
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Fetches <span className="font-mono">netflixtechblog.medium.com</span> and{" "}
+                          <span className="font-mono">netflixtechblog.com</span> articles via MCP tools (<span className="font-mono">medium_get_article_content</span>) instead of raw URL scraping, preserving headings and <span className="font-mono">&lt;pre&gt;&lt;code&gt;</span> blocks.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          2. AlloyDB 2-Tier Parent-Child Schema
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Stores 62 full untruncated articles in <span className="font-mono">documents</span> (with SHA-256 <span className="font-mono">content_hash</span> deduplication) and 130 overlapping chunks in <span className="font-mono">document_chunks</span> with <span className="font-mono">vector(32)</span> ScaNN embeddings.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          3. Runtime Target Retrieval Agent (ADK)
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Expands client patent concepts into multi-query hybrid vector + keyword lookups against AlloyDB (<span className="font-mono">search_target_knowledge</span>) without browsing the internet.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 font-mono text-[11px] text-slate-600 flex items-center justify-between">
+                    <span>ADK: root → target_retrieval → target_analysis</span>
+                    <span className="text-emerald-700 font-bold">STEP 2</span>
+                  </div>
+                </div>
+
+                {/* PIPELINE 3: PATENT-TARGET MATCHING & COMMERCIAL AGENT */}
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs flex flex-col justify-between">
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded">
+                        PIPELINE 03 · MATCHING & COMMERCIAL AGENT
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-400">matching_agent/</span>
+                    </div>
+
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        Evidence Alignment & Opportunity Prioritization
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                        Dual-Axis Technical + Commercial Screening
+                      </p>
+                    </div>
+
+                    <div className="space-y-2.5 text-xs">
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Part 1 · Claim-Element Technical Alignment
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Maps each independent claim element (<span className="font-mono">1A–1D</span>) against documented target capabilities and verbatim quotes, explicitly surfacing unconfirmed limitations (evidence gaps).
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Part 2 · Public Commercial Opportunity Signal
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Combines SEC Form 10-K consolidated scale ($33.7B–$39.0B revenue, 260M–301M+ subscribers), subscription tier linkage, patent status, and remaining term without fabricating product revenue.
+                        </p>
+                      </div>
+
+                      <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
+                        <div className="font-mono font-bold text-slate-900">
+                          Part 3 · Gatekeeper Investigation Priority
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Produces the 9-column Ranked Patent–Product Intelligence Table with deterministic caps when technical overlap is low or a patent is expired.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 font-mono text-[11px] text-slate-600 flex items-center justify-between">
+                    <span>ADK: technical → commercial → priority</span>
+                    <span className="text-indigo-700 font-bold">STEP 3</span>
+                  </div>
+                </div>
+              </section>
+
+              {/* =================================================================
+                  GOOGLE ADK MULTI-AGENT & DETERMINISTIC TOOL SPECIFICATION MATRIX
+                 ================================================================= */}
+              <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Google ADK Multi-Agent & Deterministic Python Tool Specification
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Strict separation between deterministic Python data/math operations and Gemini LLM technical reasoning.
+                    </p>
+                  </div>
+                  <span className="font-mono text-[11px] text-slate-600 bg-slate-100 px-2.5 py-1 rounded">
+                    Orchestrator: Google ADK SequentialAgent
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-[#080C14] text-white font-mono text-[10px] uppercase">
+                        <th className="py-3 px-4">PIPELINE STAGE & ADK AGENT</th>
+                        <th className="py-3 px-4">DETERMINISTIC PYTHON TOOL(S)</th>
+                        <th className="py-3 px-4">EXECUTION RESPONSIBILITY BOUNDARY</th>
+                        <th className="py-3 px-4">OUTPUT ARTIFACT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      <tr className="hover:bg-slate-50">
+                        <td className="py-3 px-4 font-mono font-bold text-blue-700">
+                          01. patent_retrieval_agent
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-800">
+                          inspect_patents_schema_tool<br />
+                          resolve_client_company_tool<br />
+                          retrieve_staged_patents_tool
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          <strong>Deterministic Python:</strong> Queries <span className="font-mono">patents-public-data.patents.publications</span>, resolves harmonized assignees, filters by CPC/technology niche, and retrieves top candidate claims.
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
+                          Shortlisted BigQuery Patent Records
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="py-3 px-4 font-mono font-bold text-blue-700">
+                          02. patent_analysis_agent
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-800">
+                          analyze_patent_candidates_tool<br />
+                          estimate_remaining_patent_life
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          <strong>Hybrid ADK + Python:</strong> Decomposes independent claims into atomic elements (<span className="font-mono">1A..1D</span>), extracts technical concepts, and deterministically computes 20-year remaining term from <span className="font-mono">filing_date</span>.
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
+                          Decomposed Claims & Source vs. AI Facts
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="py-3 px-4 font-mono font-bold text-blue-700">
+                          03. patent_ranking_agent
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-800">
+                          cluster_and_rank_patents_tool
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          <strong>Deterministic Python:</strong> Assigns hierarchical technology clusters (<span className="font-mono">Parent &gt; Sub-area</span>) and calculates the 100-point transparent relevance breakdown.
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
+                          Ranked Client Patent Dossier JSON
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="py-3 px-4 font-mono font-bold text-emerald-700">
+                          04. target_retrieval_agent
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-800">
+                          search_target_knowledge<br />
+                          fetch_article_via_medium_mcp
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          <strong>Deterministic Python + AlloyDB:</strong> Queries pre-fetched AlloyDB <span className="font-mono">document_chunks</span> (<span className="font-mono">vector(32)</span> ScaNN + keyword + tag filters) populated via Medium MCP Server.
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
+                          Target Capabilities & Verbatim Quotes
+                        </td>
+                      </tr>
+                      <tr className="hover:bg-slate-50">
+                        <td className="py-3 px-4 font-mono font-bold text-indigo-700">
+                          05. matching &amp; priority agents
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-800">
+                          evaluate_claim_element_alignment_tool<br />
+                          retrieve_commercial_intelligence_tool<br />
+                          compute_investigation_priority_tool
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          <strong>Hybrid ADK + Python Gatekeeper:</strong> Aligns claim elements against target evidence, evaluates SEC 10-K commercial scale separately, and enforces non-infringement guardrails.
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">
+                          9-Column Ranked Intelligence Table
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
           ) : (
             <>
           {/* =================================================================

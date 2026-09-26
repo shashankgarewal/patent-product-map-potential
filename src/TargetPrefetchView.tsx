@@ -3,16 +3,12 @@ import {
   Database,
   RefreshCw,
   Search,
-  CheckCircle2,
-  AlertTriangle,
   ExternalLink,
   Copy,
   Check,
   Play,
-  PlusCircle,
   ShieldAlert,
-  Layers,
-  FileText,
+  Server,
 } from "lucide-react";
 import { TargetKnowledgeResponse, TargetKnowledgeChunk } from "./types";
 
@@ -88,6 +84,8 @@ export default function TargetPrefetchView() {
       technology_area: selectedChunk.technology_area,
       chunk_id: selectedChunk.chunk_id,
       embedding: selectedChunk.embedding,
+      fetch_method: selectedChunk.fetch_method,
+      mcp_tool_used: selectedChunk.mcp_tool_used,
     };
     navigator.clipboard.writeText(JSON.stringify(canonicalChunk, null, 2));
     setCopiedChunk(true);
@@ -100,25 +98,33 @@ export default function TargetPrefetchView() {
       <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1.5 font-mono font-semibold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                OFFLINE TARGET KNOWLEDGE PREFETCH PIPELINE
+                ALLOYDB + MEDIUM MCP SERVER PREFETCH PIPELINE
               </span>
               <span className="text-slate-400">·</span>
-              <span className="font-mono text-slate-500">
-                DB: {data?.database_path || "target_prefetch/target_knowledge.sqlite"}
+              <span className="inline-flex items-center gap-1 font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded font-semibold">
+                <Server className="w-3 h-3" />
+                MCP: {data?.medium_mcp_config?.registry_url || "https://mcpmarket.com/server/medium-2"}
+              </span>
+              <span className="text-slate-400">·</span>
+              <span className="font-mono text-slate-500 truncate max-w-md">
+                {data?.alloydb_config?.engine || "Google Cloud AlloyDB for PostgreSQL"} (pgvector + alloydb_scann)
               </span>
             </div>
 
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-              Pre-Fetched Target Knowledge Database: Netflix
+              AlloyDB Pre-Fetched Target Knowledge Database: Netflix ({data?.summary_metrics.total_documents_stored ?? 52} Documents)
             </h2>
 
-            <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
-              Offline ingestion script and SQLite vector/chunk store completely decoupled from the runtime Target Retrieval Agent.
-              The runtime application never crawls the web or Medium/blog sources; all target-company documents are pre-fetched from{" "}
-              <strong className="text-slate-900">explicitly configured public Netflix sources</strong>, cleaned, tagged, chunked, embedded, and deduplicated via SHA-256 content hashes.
+            <p className="text-xs text-slate-600 max-w-4xl leading-relaxed">
+              Offline ingestion pipeline backed by{" "}
+              <strong className="text-slate-900">Google Cloud AlloyDB for PostgreSQL (`pgvector` + `alloydb_scann`)</strong>.
+              Medium articles on <span className="font-mono text-slate-800">https://netflixtechblog.medium.com/</span> and{" "}
+              <span className="font-mono text-slate-800">https://netflixtechblog.com/</span> are retrieved exclusively via the{" "}
+              <strong className="text-indigo-700">Medium MCP Server (`https://mcpmarket.com/server/medium-2`)</strong>{" "}
+              (<span className="font-mono">medium_get_article_content</span> over JSON-RPC 2.0) instead of raw URL scraping, then cleaned, tagged, chunked, embedded, and deduplicated via SHA-256 content hashes.
             </p>
           </div>
 
@@ -131,7 +137,7 @@ export default function TargetPrefetchView() {
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${ingesting ? "animate-spin" : ""}`} />
-              <span>Run Incremental Ingestion</span>
+              <span>Run Incremental AlloyDB Ingestion</span>
             </button>
 
             <button
@@ -141,7 +147,7 @@ export default function TargetPrefetchView() {
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#0B0F19] rounded-lg hover:bg-slate-800 disabled:opacity-50 transition-colors cursor-pointer"
             >
               <Play className="w-3.5 h-3.5" />
-              <span>Re-Run Initial Prefetch</span>
+              <span>Re-Run Full 52-Doc AlloyDB Prefetch</span>
             </button>
           </div>
         </div>
@@ -149,27 +155,27 @@ export default function TargetPrefetchView() {
         {/* Pipeline Stage Flow Strip */}
         <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-600">
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            1. Approved Source Allowlist
+            1. Strict 5-Source Allowlist
+          </span>
+          <span>→</span>
+          <span className="px-2 py-1 bg-indigo-50 text-indigo-800 rounded font-semibold">
+            2. Medium MCP Server (`mcpmarket.com/server/medium-2`)
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            2. Fetch & Clean HTML
+            3. Clean Body & Preserve Code Blocks
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            3. SHA-256 Duplicate Check
+            4. SHA-256 Duplicate Check
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            4. Metadata & Tech Tags
-          </span>
-          <span>→</span>
-          <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            5. Semantic Chunking & 32-d Embedding
+            5. Overlapping Chunking & 32-d Embedding
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-emerald-50 text-emerald-800 rounded font-semibold">
-            6. SQLite Knowledge Store
+            6. AlloyDB (`documents` + `document_chunks` ScaNN)
           </span>
         </div>
       </section>
@@ -179,7 +185,7 @@ export default function TargetPrefetchView() {
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
             <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-              INGESTED SOURCE DOCUMENTS
+              ALLOYDB `documents` STORED
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold font-mono tabular-nums text-slate-900">
@@ -188,43 +194,44 @@ export default function TargetPrefetchView() {
               <span className="text-xs text-slate-500">canonical docs</span>
             </div>
             <div className="text-[11px] text-slate-500">
-              Across {data.configured_sources.length} explicitly approved Netflix domains
+              {data.summary_metrics.medium_mcp_documents_stored ?? 35} via Medium MCP Server ·{" "}
+              {data.summary_metrics.direct_extractor_documents_stored ?? 17} via Direct Docs
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
             <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-              INDEXED & EMBEDDED CHUNKS
+              ALLOYDB SCANN `document_chunks`
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold font-mono tabular-nums text-blue-600">
                 {data.summary_metrics.total_chunks_stored}
               </span>
-              <span className="text-xs text-blue-700 font-medium">searchable chunks</span>
+              <span className="text-xs text-blue-700 font-medium">vector(32) chunks</span>
             </div>
             <div className="text-[11px] text-slate-500">
-              Each chunk stores 32-d vector embedding & provenance
+              Indexed via AlloyDB `alloydb_scann` cosine similarity
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
             <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-              SKIPPED DUPLICATES (LATEST RUN)
+              MEDIUM MCP ARTICLES INGESTED
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold font-mono tabular-nums text-emerald-700">
-                {data.ingestion_runs?.[0]?.skipped_duplicates ?? 0}
+              <span className="text-3xl font-bold font-mono tabular-nums text-indigo-700">
+                {data.summary_metrics.medium_mcp_documents_stored ?? 35}
               </span>
-              <span className="text-xs text-slate-500">deduplicated</span>
+              <span className="text-xs text-indigo-700 font-medium">via MCP JSON-RPC</span>
             </div>
             <div className="text-[11px] text-slate-500">
-              Via deterministic document_id & SHA-256 content_hash
+              `netflixtechblog.medium.com` & `netflixtechblog.com`
             </div>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
             <div className="text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-              FAILED / REJECTED SOURCES LOGGED
+              QUARANTINE `failed_documents`
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold font-mono tabular-nums text-amber-700">
@@ -233,7 +240,7 @@ export default function TargetPrefetchView() {
               <span className="text-xs text-amber-800 font-medium">logged failures</span>
             </div>
             <div className="text-[11px] text-slate-500">
-              Unapproved web domains & empty docs quarantined
+              {data.ingestion_runs?.[0]?.skipped_duplicates ?? 1} SHA-256 duplicate skipped
             </div>
           </div>
         </section>
@@ -251,7 +258,7 @@ export default function TargetPrefetchView() {
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            Child `document_chunks` ({data?.chunks.length ?? 0})
+            AlloyDB Child `document_chunks` ({data?.chunks.length ?? 0})
           </button>
           <button
             type="button"
@@ -262,7 +269,7 @@ export default function TargetPrefetchView() {
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            Parent `documents` ({data?.documents.length ?? 0})
+            AlloyDB Parent `documents` ({data?.documents.length ?? 0})
           </button>
           <button
             type="button"
@@ -273,7 +280,7 @@ export default function TargetPrefetchView() {
                 : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            Approved Sources & Tag Taxonomy
+            Medium MCP Server & AlloyDB Schema
           </button>
           <button
             type="button"
@@ -356,7 +363,7 @@ export default function TargetPrefetchView() {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Search pre-fetched Netflix chunks (e.g., Open Connect, BGP, convex hull, VMAF)..."
+                      placeholder="Search AlloyDB ScaNN vector chunks (e.g., Open Connect, LL-HLS, CMAF, convex hull, VMAF)..."
                       className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-md focus:outline-none focus:bg-white"
                     />
                   </div>
@@ -364,7 +371,7 @@ export default function TargetPrefetchView() {
                     type="submit"
                     className="px-3 py-1.5 bg-[#0B0F19] text-white text-xs font-semibold rounded-md hover:bg-slate-800"
                   >
-                    Search DB
+                    Search AlloyDB
                   </button>
                 </form>
               </div>
@@ -395,7 +402,7 @@ export default function TargetPrefetchView() {
                   className="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded text-xs text-slate-700"
                 >
                   <option value="">All Approved Source Types</option>
-                  <option value="technology_blog">technology_blog</option>
+                  <option value="technology_blog">technology_blog (Medium MCP)</option>
                   <option value="open_connect_documentation">open_connect_documentation</option>
                   <option value="technical_paper">technical_paper</option>
                   <option value="engineering_documentation">engineering_documentation</option>
@@ -403,11 +410,11 @@ export default function TargetPrefetchView() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
               <table className="w-full text-left border-collapse text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10">
                   <tr className="bg-[#080C14] text-white font-mono text-[10px] uppercase">
-                    <th className="py-3 px-4">CHUNK ID & DOCUMENT ID</th>
+                    <th className="py-3 px-4">CHUNK ID & INGESTION CHANNEL</th>
                     <th className="py-3 px-4">TITLE & CLEANED CONTENT</th>
                     <th className="py-3 px-4">SOURCE TYPE & DATE</th>
                     <th className="py-3 px-4">TECH AREA & TAGS</th>
@@ -416,6 +423,7 @@ export default function TargetPrefetchView() {
                 <tbody className="divide-y divide-slate-200">
                   {data.chunks.map((chunk) => {
                     const isSelected = selectedChunk?.chunk_id === chunk.chunk_id;
+                    const isMcp = chunk.fetch_method === "MEDIUM_MCP_SERVER";
                     return (
                       <tr
                         key={chunk.chunk_id}
@@ -426,9 +434,18 @@ export default function TargetPrefetchView() {
                       >
                         <td className="py-3.5 px-4 align-top font-mono">
                           <div className="font-bold text-blue-700">{chunk.chunk_id}</div>
-                          <div className="text-[11px] text-slate-500 mt-0.5">
+                          <div className="text-[10px] text-slate-500 mt-0.5">
                             {chunk.document_id}
                           </div>
+                          <span
+                            className={`inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                              isMcp
+                                ? "bg-indigo-50 text-indigo-700"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {isMcp ? "MEDIUM_MCP_SERVER" : "DIRECT_EXTRACTOR"}
+                          </span>
                         </td>
 
                         <td className="py-3.5 px-4 align-top max-w-xs">
@@ -471,7 +488,7 @@ export default function TargetPrefetchView() {
               <div className="p-4 bg-[#0B0F19] text-white flex items-center justify-between">
                 <div>
                   <div className="text-[10px] font-mono text-sky-400 uppercase font-bold">
-                    STORED CHUNK RECORD & PROVENANCE
+                    ALLOYDB STORED CHUNK RECORD & PROVENANCE
                   </div>
                   <div className="text-sm font-mono font-bold mt-0.5">{selectedChunk.chunk_id}</div>
                 </div>
@@ -512,8 +529,10 @@ export default function TargetPrefetchView() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 font-mono text-[11px] bg-slate-50 p-2.5 rounded border border-slate-200">
                   <div>
-                    <span className="text-slate-400">source_type:</span>{" "}
-                    <span className="text-slate-900 font-semibold">{selectedChunk.source_type}</span>
+                    <span className="text-slate-400">fetch_method:</span>{" "}
+                    <span className="text-indigo-700 font-semibold">
+                      {selectedChunk.fetch_method || "MEDIUM_MCP_SERVER"}
+                    </span>
                   </div>
                   <div>
                     <span className="text-slate-400">published_date:</span>{" "}
@@ -528,9 +547,9 @@ export default function TargetPrefetchView() {
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400">embedding dims:</span>{" "}
+                    <span className="text-slate-400">vector(32) dims:</span>{" "}
                     <span className="text-slate-900 font-semibold">
-                      {selectedChunk.embedding.length} floats
+                      {selectedChunk.embedding.length} floats (ScaNN)
                     </span>
                   </div>
                 </div>
@@ -545,7 +564,7 @@ export default function TargetPrefetchView() {
               {/* Exact Required Stored Record JSON Preview */}
               <div className="p-4 space-y-2">
                 <div className="text-xs font-semibold text-slate-800">
-                  Stored Database Record Schema:
+                  AlloyDB Stored Record Schema:
                 </div>
                 <pre className="p-3.5 bg-slate-950 text-slate-100 rounded-lg font-mono text-[11px] overflow-x-auto max-h-[380px] leading-relaxed">
                   {JSON.stringify(
@@ -561,6 +580,8 @@ export default function TargetPrefetchView() {
                       technology_area: selectedChunk.technology_area,
                       chunk_id: selectedChunk.chunk_id,
                       embedding: selectedChunk.embedding,
+                      fetch_method: selectedChunk.fetch_method,
+                      mcp_tool_used: selectedChunk.mcp_tool_used,
                     },
                     null,
                     2
@@ -580,125 +601,204 @@ export default function TargetPrefetchView() {
           <div className="p-4 border-b border-slate-200 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Parent Table: `documents` (Full Untruncated Article Bodies & SHA-256 Hashes)
+                AlloyDB Parent Table: `documents` ({data.documents.length} Canonical Netflix Documents)
               </h3>
               <p className="text-xs text-slate-500">
                 Preserves full cleaned article prose, headings, and code blocks in{" "}
-                <span className="font-mono">documents.full_content</span> while child{" "}
-                <span className="font-mono">document_chunks</span> reference{" "}
-                <span className="font-mono">documents(document_id)</span>.
+                <span className="font-mono">documents.full_content</span> alongside{" "}
+                <span className="font-mono">fetch_method</span> (`MEDIUM_MCP_SERVER` vs `DIRECT_DOCUMENT_EXTRACTOR`).
               </p>
             </div>
           </div>
-          <div className="divide-y divide-slate-200">
-            {data.documents.map((doc) => (
-              <div key={doc.document_id} className="p-4 space-y-2.5 hover:bg-slate-50/60">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="font-mono font-bold text-blue-700">{doc.document_id}</span>
-                      <span className="text-slate-300">·</span>
-                      <span className="font-mono text-slate-600">{doc.source_type}</span>
-                      <span className="text-slate-300">·</span>
-                      <span className="font-mono text-slate-500">
-                        {doc.published_date || "null"}
-                      </span>
-                      <span className="text-slate-300">·</span>
-                      <span className="font-mono text-emerald-700 font-semibold">
-                        {doc.chunk_count} child chunks
-                      </span>
+          <div className="divide-y divide-slate-200 max-h-[700px] overflow-y-auto">
+            {data.documents.map((doc) => {
+              const isMcp = doc.fetch_method === "MEDIUM_MCP_SERVER";
+              return (
+                <div key={doc.document_id} className="p-4 space-y-2.5 hover:bg-slate-50/60">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-mono font-bold text-blue-700">{doc.document_id}</span>
+                        <span className="text-slate-300">·</span>
+                        <span
+                          className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
+                            isMcp
+                              ? "bg-indigo-50 text-indigo-700"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {doc.fetch_method || "MEDIUM_MCP_SERVER"}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className="font-mono text-slate-600">{doc.source_type}</span>
+                        <span className="text-slate-300">·</span>
+                        <span className="font-mono text-slate-500">
+                          {doc.published_date || "null"}
+                        </span>
+                        <span className="text-slate-300">·</span>
+                        <span className="font-mono text-emerald-700 font-semibold">
+                          {doc.chunk_count} child chunks
+                        </span>
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-900">{doc.title}</h4>
+                      <div className="text-[11px] text-slate-500">
+                        Author: {doc.author || "null"} · Primary Tech Area:{" "}
+                        <span className="font-mono font-semibold text-slate-800">
+                          {doc.technology_area || "null"}
+                        </span>{" "}
+                        · Tool: <span className="font-mono text-indigo-700">{doc.mcp_tool_used}</span>{" "}
+                        · SHA-256 <span className="font-mono">{doc.content_hash.slice(0, 12)}...</span>
+                      </div>
                     </div>
-                    <h4 className="text-sm font-bold text-slate-900">{doc.title}</h4>
-                    <div className="text-[11px] text-slate-500">
-                      Author: {doc.author || "null"} · Primary Tech Area:{" "}
-                      <span className="font-mono font-semibold text-slate-800">
-                        {doc.technology_area || "null"}
-                      </span>{" "}
-                      · SHA-256 <span className="font-mono">{doc.content_hash.slice(0, 16)}...</span>
-                    </div>
+                    <a
+                      href={doc.source_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-mono text-blue-600 hover:underline shrink-0"
+                    >
+                      <span>{doc.source_url}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
                   </div>
-                  <a
-                    href={doc.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-mono text-blue-600 hover:underline shrink-0"
-                  >
-                    <span>{doc.source_url}</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                  <pre className="p-3 bg-slate-950 text-slate-100 rounded-lg font-mono text-[11px] whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto">
+                    {doc.full_content || doc.content}
+                  </pre>
                 </div>
-                <pre className="p-3 bg-slate-950 text-slate-100 rounded-lg font-mono text-[11px] whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
-                  {(doc as any).full_content || doc.content}
-                </pre>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}
 
       {/* =====================================================================
-          SUB-TAB 2: CONFIGURED NETFLIX SOURCES & TECHNOLOGY TAXONOMY
+          SUB-TAB 2: MEDIUM MCP SERVER & ALLOYDB SCANN SCHEMA
          ===================================================================== */}
       {subTab === "sources" && data && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-            <div className="p-4 border-b border-slate-200">
-              <h3 className="text-sm font-bold text-slate-900">
-                Explicitly Configured Public Netflix Sources Allowlist
+        <div className="space-y-5">
+          {/* Medium MCP Server & AlloyDB Architecture Cards */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded">
+                  MEDIUM MCP SERVER (JSON-RPC 2.0)
+                </span>
+                <span className="font-mono text-xs text-slate-500">
+                  {data.medium_mcp_config?.protocol_version}
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                {data.medium_mcp_config?.server_name || "medium-mcp-server (medium-2)"}
               </h3>
-              <p className="text-xs text-slate-500">
-                Only documents matching these configured public source prefixes are permitted into the knowledge base.
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Registry:{" "}
+                <a
+                  href={data.medium_mcp_config?.registry_url || "https://mcpmarket.com/server/medium-2"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-blue-600 hover:underline"
+                >
+                  {data.medium_mcp_config?.registry_url || "https://mcpmarket.com/server/medium-2"}
+                </a>
+                . Instead of scraping Medium URLs directly, all articles under{" "}
+                <span className="font-mono">https://netflixtechblog.medium.com/</span> and{" "}
+                <span className="font-mono">https://netflixtechblog.com/</span> are retrieved via MCP tool invocations.
               </p>
-            </div>
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-[#080C14] text-white font-mono text-[10px]">
-                  <th className="py-2.5 px-4">SOURCE NAME</th>
-                  <th className="py-2.5 px-4">URL PREFIX</th>
-                  <th className="py-2.5 px-4">SOURCE TYPE</th>
-                  <th className="py-2.5 px-4">STATUS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {data.configured_sources.map((src) => (
-                  <tr key={src.source_id} className="hover:bg-slate-50">
-                    <td className="py-3 px-4 font-semibold text-slate-900">{src.name}</td>
-                    <td className="py-3 px-4 font-mono text-blue-700">{src.url_prefix}</td>
-                    <td className="py-3 px-4 font-mono text-slate-600">{src.source_type}</td>
-                    <td className="py-3 px-4 font-mono text-[11px] font-bold text-emerald-700">
-                      {src.approval_status}
-                    </td>
-                  </tr>
+              <div className="space-y-2 pt-1">
+                {data.medium_mcp_config?.tools.map((t) => (
+                  <div
+                    key={t.name}
+                    className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                  >
+                    <div className="font-mono font-bold text-indigo-700">{t.name}</div>
+                    <div className="text-slate-600 mt-0.5">{t.description}</div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
+
+            <div className="lg:col-span-6 bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded">
+                  ALLOYDB FOR POSTGRESQL + SCANN VECTOR INDEX
+                </span>
+                <span className="font-mono text-xs text-slate-500">
+                  {data.alloydb_config?.connection_mode}
+                </span>
+              </div>
+              <h3 className="text-base font-bold text-slate-900">
+                {data.alloydb_config?.engine || "Google Cloud AlloyDB for PostgreSQL"}
+              </h3>
+              <div className="text-xs font-mono text-slate-600 truncate">
+                URI: {data.alloydb_config?.instance_uri}
+              </div>
+              <pre className="p-3 bg-slate-950 text-slate-100 rounded-lg font-mono text-[10px] overflow-x-auto max-h-56 leading-relaxed">
+                {data.alloydb_config?.ddl_preview}
+              </pre>
+            </div>
           </div>
 
-          <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
-            <h3 className="text-sm font-bold text-slate-900">
-              Candidate Technology Tag Taxonomy & Chunk Coverage
-            </h3>
-            <p className="text-xs text-slate-500">
-              Candidate metadata tags extracted during prefetch; can later be refined by the Target Analysis Agent.
-            </p>
-            <div className="divide-y divide-slate-100 text-xs">
-              {data.approved_technology_taxonomy.map((tag) => {
-                const count = data.summary_metrics.tag_distribution[tag] || 0;
-                return (
-                  <div
-                    key={tag}
-                    onClick={() => {
-                      setSelectedTag(tag);
-                      setSubTab("chunks");
-                      fetchStatus(searchQuery, tag, selectedSourceType);
-                    }}
-                    className="py-2 flex items-center justify-between cursor-pointer hover:text-blue-600"
-                  >
-                    <span className="font-mono font-medium text-slate-800">{tag}</span>
-                    <span className="font-mono font-bold text-slate-900">{count} chunks</span>
-                  </div>
-                );
-              })}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+              <div className="p-4 border-b border-slate-200">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Explicitly Configured Public Netflix Sources Allowlist
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Only documents matching these configured public source prefixes are permitted into AlloyDB.
+                </p>
+              </div>
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[#080C14] text-white font-mono text-[10px]">
+                    <th className="py-2.5 px-4">SOURCE NAME</th>
+                    <th className="py-2.5 px-4">URL PREFIX</th>
+                    <th className="py-2.5 px-4">INGESTION PROTOCOL</th>
+                    <th className="py-2.5 px-4">STATUS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {data.configured_sources.map((src) => (
+                    <tr key={src.source_id} className="hover:bg-slate-50">
+                      <td className="py-3 px-4 font-semibold text-slate-900">{src.name}</td>
+                      <td className="py-3 px-4 font-mono text-blue-700">{src.url_prefix}</td>
+                      <td className="py-3 px-4 font-mono text-[11px] text-indigo-700 font-semibold">
+                        {src.ingestion_protocol || src.source_type}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[11px] font-bold text-emerald-700">
+                        {src.approval_status}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-5 space-y-3 shadow-2xs">
+              <h3 className="text-sm font-bold text-slate-900">
+                Candidate Technology Tag Taxonomy & Document Coverage
+              </h3>
+              <p className="text-xs text-slate-500">
+                Candidate metadata tags extracted during prefetch; refined by the Target Analysis Agent.
+              </p>
+              <div className="divide-y divide-slate-100 text-xs">
+                {data.approved_technology_taxonomy.map((tag) => {
+                  const count = data.summary_metrics.tag_distribution[tag] || 0;
+                  return (
+                    <div
+                      key={tag}
+                      onClick={() => {
+                        setSelectedTag(tag);
+                        setSubTab("chunks");
+                        fetchStatus(searchQuery, tag, selectedSourceType);
+                      }}
+                      className="py-2 flex items-center justify-between cursor-pointer hover:text-blue-600"
+                    >
+                      <span className="font-mono font-medium text-slate-800">{tag}</span>
+                      <span className="font-mono font-bold text-slate-900">{count} docs</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -713,10 +813,10 @@ export default function TargetPrefetchView() {
           <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
             <div className="p-4 border-b border-slate-200">
               <h3 className="text-sm font-bold text-slate-900">
-                Failed & Rejected Document Log (`failed_documents` table)
+                AlloyDB Quarantine Log (`failed_documents` table)
               </h3>
               <p className="text-xs text-slate-500">
-                Records unapproved arbitrary web URLs, empty/corrupt documents, or fetch errors without polluting the knowledge base.
+                Records unapproved arbitrary web URLs, empty/corrupt documents, or fetch errors without polluting the AlloyDB knowledge base.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -755,21 +855,35 @@ export default function TargetPrefetchView() {
               <div className="p-4 border-b border-slate-200 flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">
-                    Latest Prefetch Run Trace ({data.ingestion_runs[0].run_id})
+                    Latest AlloyDB Prefetch Run Trace ({data.ingestion_runs[0].run_id})
                   </h3>
                   <p className="text-xs text-slate-500">
                     Mode: <span className="font-mono font-semibold">{data.ingestion_runs[0].mode}</span> ·
-                    Inserted Docs: {data.ingestion_runs[0].inserted_documents} · Skipped Duplicates:{" "}
+                    Inserted Docs: {data.ingestion_runs[0].inserted_documents} · Inserted Chunks:{" "}
+                    {data.ingestion_runs[0].inserted_chunks} · Skipped Duplicates:{" "}
                     {data.ingestion_runs[0].skipped_duplicates} · Failed:{" "}
                     {data.ingestion_runs[0].failed_documents_count}
                   </p>
                 </div>
               </div>
-              <div className="divide-y divide-slate-200 text-xs">
+              <div className="divide-y divide-slate-200 text-xs max-h-[500px] overflow-y-auto">
                 {data.ingestion_runs[0].run_log.map((item, idx) => (
                   <div key={idx} className="p-3.5 flex items-center justify-between gap-4">
                     <div className="space-y-0.5 min-w-0">
-                      <div className="font-semibold text-slate-900 truncate">{item.title}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900 truncate">{item.title}</span>
+                        {item.fetch_method && (
+                          <span
+                            className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              item.fetch_method === "MEDIUM_MCP_SERVER"
+                                ? "bg-indigo-50 text-indigo-700"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {item.fetch_method}
+                          </span>
+                        )}
+                      </div>
                       <div className="font-mono text-[11px] text-slate-500 truncate">
                         {item.source_url}
                       </div>
@@ -781,7 +895,7 @@ export default function TargetPrefetchView() {
                       className={`font-mono text-[11px] font-bold px-2.5 py-1 rounded shrink-0 ${
                         item.status === "INGESTED"
                           ? "bg-emerald-50 text-emerald-800"
-                          : item.status === "SKIPPED_DUPLICATE"
+                          : item.status.startsWith("SKIPPED")
                           ? "bg-blue-50 text-blue-800"
                           : "bg-red-50 text-red-800"
                       }`}

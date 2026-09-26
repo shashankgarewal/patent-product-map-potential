@@ -3,18 +3,24 @@ Offline Target Company Knowledge Prefetch Pipeline (`target_prefetch/pipeline.py
 
 Completely decoupled from the runtime Target Retrieval Agent.
 Pipeline Flow:
-Source URL
+Source Entry
   → Validate against strict 5-prefix allowlist (`APPROVED_SOURCE_CONFIGS`)
-  → Fetch HTML via Python (`httpx`/`requests`/`urllib.request` or offline curated snapshot)
-  → Clean content (`BeautifulSoup`/`trafilatura` or structured HTML parser: strip `<nav>`, `<footer>`,
-    `<script>`, `<style>`, while preserving `<pre>/<code>` blocks, `<h1>-<h6>` headings, and full text)
+  → Route by domain:
+      • If Medium publication (`https://netflixtechblog.medium.com/` or `https://netflixtechblog.com/`):
+          Invoke **Medium MCP Server** (`https://mcpmarket.com/server/medium-2`, JSON-RPC 2.0 `tools/call`
+          -> `medium_get_article_content`) instead of fetching from URL.
+      • If Non-Medium Netflix technical documentation (`openconnect.netflix.com`, `research.netflix.com`,
+        `netflix.github.io`):
+          Extract via Direct Document Extractor.
+  → Clean content (strip `<nav>`, `<footer>`, `<script>`, `<style>`, while preserving `<pre>/<code>` blocks,
+    `<h1>-<h6>` headings, and full text)
   → Extract metadata (`title`, `author`, `published_date`, `candidate_tags`, `technology_area`)
-  → SHA-256 Duplicate Check against `documents.content_hash` and `documents.source_url`
-  → Store full document in parent table `documents` (`full_content` preserved without truncation)
+  → SHA-256 Duplicate Check against AlloyDB `documents.content_hash` and `documents.source_url`
+  → Store full document in AlloyDB parent table `documents` (`full_content` preserved without truncation)
   → Chunk document into overlapping text windows (`{document_id}_chunk_{index}`)
-  → Generate dense vector embeddings for each chunk
-  → Store granular chunks in child table `document_chunks`
-  → Log any rejected URL or HTTP/parsing failure into quarantine table `failed_documents`
+  → Generate 32-d dense vector embeddings for each chunk (indexed via AlloyDB `alloydb_scann` / `pgvector`)
+  → Store granular chunks in AlloyDB child table `document_chunks`
+  → Log any rejected URL or MCP/HTTP/parsing failure into AlloyDB quarantine table `failed_documents`
 """
 
 from datetime import datetime, timezone
@@ -26,7 +32,6 @@ import math
 import re
 from typing import Dict, Any, List, Optional, Tuple
 import urllib.request
-import urllib.error
 
 from target_prefetch.sources_config import (
     TARGET_COMPANY,
@@ -36,12 +41,19 @@ from target_prefetch.sources_config import (
 )
 from target_prefetch.db import (
     DB_PATH,
+    ALLOYDB_URI_DISPLAY,
+    get_alloydb_config_metadata,
     get_db_connection,
     init_target_knowledge_db,
     initialize_database,
 )
+from target_prefetch.medium_mcp_server import (
+    is_medium_publication_url,
+    fetch_article_via_medium_mcp,
+    get_medium_mcp_config_metadata,
+)
 
-# Optional third-party extractors / HTTP clients when present in environment
+# Optional third-party extractors / HTTP clients for non-Medium approved sources
 try:
     import httpx  # type: ignore
 except ImportError:
@@ -51,16 +63,6 @@ try:
     import requests  # type: ignore
 except ImportError:
     requests = None
-
-try:
-    from bs4 import BeautifulSoup  # type: ignore
-except ImportError:
-    BeautifulSoup = None
-
-try:
-    import trafilatura  # type: ignore
-except ImportError:
-    trafilatura = None
 
 
 # ============================================================================
@@ -89,7 +91,7 @@ def validate_source_url(source_url: str) -> Tuple[bool, Optional[Dict[str, str]]
 
 
 # ============================================================================
-# 2. HTML FETCHING & STRUCTURED MAIN-BODY EXTRACTION (PRESERVING CODE & HEADINGS)
+# 2. STRUCTURED MAIN-BODY EXTRACTION (PRESERVING CODE & HEADINGS)
 # ============================================================================
 
 class StructuredArticleHTMLParser(HTMLParser):
@@ -213,47 +215,98 @@ class StructuredArticleHTMLParser(HTMLParser):
         self.current_buffer.append(data)
 
 
-def fetch_html_from_source(source_entry: Dict[str, Any], allow_network: bool = False) -> Tuple[bool, str, str]:
+def fetch_from_source_or_medium_mcp(
+    source_entry: Dict[str, Any],
+    allow_network: bool = False,
+) -> Tuple[bool, str, str, str, str]:
     """
-    Fetches raw HTML for a configured source entry.
-    - If `simulate_http_error` is set on the entry, returns a failure tuple so error quarantine
-      logging to `failed_documents` is deterministically exercised.
-    - If `raw_html` or `raw_html_or_text` is provided in the offline source manifest, uses it directly.
-    - If `allow_network=True`, fetches via `httpx`, `requests`, or `urllib.request`.
-    """
-    if source_entry.get("simulate_http_error"):
-        return False, "HTTP_404_ERROR", str(source_entry["simulate_http_error"])
+    Routes content retrieval based on source domain:
+    1. If `source_url` is on `https://netflixtechblog.medium.com/` or `https://netflixtechblog.com/`:
+       NEVER fetches directly from URL; instead invokes the Medium MCP Server
+       (`https://mcpmarket.com/server/medium-2`) via JSON-RPC 2.0 `medium_get_article_content`.
+    2. Otherwise (Open Connect docs, Research papers, GitHub engineering specs):
+       Uses the Direct Document Extractor.
 
-    offline_html = source_entry.get("raw_html") or source_entry.get("raw_html_or_text") or source_entry.get("content")
+    Returns:
+        (ok, status_code, raw_html_or_err, fetch_method, mcp_tool_used)
+    """
+    source_url = (source_entry.get("source_url") or "").strip()
+
+    # Route Medium blogs exclusively through Medium MCP Server (mcpmarket.com/server/medium-2)
+    if is_medium_publication_url(source_url):
+        ok, code, html_or_err, mcp_meta = fetch_article_via_medium_mcp(
+            source_entry=source_entry,
+            catalog_entries=CONFIGURED_NETFLIX_DOCUMENTS,
+        )
+        tool_label = f"{mcp_meta.get('mcp_tool', 'medium_get_article_content')} ({mcp_meta.get('mcp_server', 'https://mcpmarket.com/server/medium-2')})"
+        return ok, code, html_or_err, "MEDIUM_MCP_SERVER", tool_label
+
+    # Non-Medium approved documentation sources
+    if source_entry.get("simulate_http_error"):
+        return (
+            False,
+            "HTTP_404_ERROR",
+            str(source_entry["simulate_http_error"]),
+            "DIRECT_DOCUMENT_EXTRACTOR",
+            "direct_html_extractor",
+        )
+
+    offline_html = (
+        source_entry.get("raw_html")
+        or source_entry.get("raw_html_or_text")
+        or source_entry.get("content")
+    )
     if offline_html and str(offline_html).strip():
-        return True, "OK", str(offline_html)
+        return (
+            True,
+            "OK",
+            str(offline_html),
+            "DIRECT_DOCUMENT_EXTRACTOR",
+            "direct_html_extractor",
+        )
 
     if not allow_network:
-        return False, "EMPTY_DOCUMENT_BODY", "Document body was empty in offline source manifest."
+        return (
+            False,
+            "EMPTY_DOCUMENT_BODY",
+            "Document body was empty in offline source manifest.",
+            "DIRECT_DOCUMENT_EXTRACTOR",
+            "direct_html_extractor",
+        )
 
-    url = source_entry.get("source_url", "")
     headers = {"User-Agent": "PatentProductIntelligencePrefetch/1.0"}
     try:
         if httpx is not None:
-            resp = httpx.get(url, headers=headers, timeout=10.0, follow_redirects=True)
+            resp = httpx.get(source_url, headers=headers, timeout=10.0, follow_redirects=True)
             resp.raise_for_status()
-            return True, "OK", resp.text
+            return True, "OK", resp.text, "DIRECT_DOCUMENT_EXTRACTOR", "direct_html_extractor"
         if requests is not None:
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(source_url, headers=headers, timeout=10)
             resp.raise_for_status()
-            return True, "OK", resp.text
-        req = urllib.request.Request(url, headers=headers)
+            return True, "OK", resp.text, "DIRECT_DOCUMENT_EXTRACTOR", "direct_html_extractor"
+        req = urllib.request.Request(source_url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as response:
-            return True, "OK", response.read().decode("utf-8", errors="replace")
+            return (
+                True,
+                "OK",
+                response.read().decode("utf-8", errors="replace"),
+                "DIRECT_DOCUMENT_EXTRACTOR",
+                "direct_html_extractor",
+            )
     except Exception as exc:
-        return False, "HTTP_FETCH_ERROR", f"Failed to fetch '{url}': {exc}"
+        return (
+            False,
+            "HTTP_FETCH_ERROR",
+            f"Failed to fetch '{source_url}': {exc}",
+            "DIRECT_DOCUMENT_EXTRACTOR",
+            "direct_html_extractor",
+        )
 
 
 def extract_and_clean_content(raw_html_or_text: str) -> Tuple[str, Dict[str, Optional[str]]]:
     """
     Extracts full cleaned article body (preserving headings, code blocks, and full text without truncation)
     while stripping navigation, footers, headers, scripts, and styles.
-    Also returns any metadata (`title`, `author`, `published_date`) discovered in HTML `<head>`.
     """
     if not raw_html_or_text or not raw_html_or_text.strip():
         return "", {"title": None, "author": None, "published_date": None}
@@ -262,17 +315,14 @@ def extract_and_clean_content(raw_html_or_text: str) -> Tuple[str, Dict[str, Opt
     parser.feed(raw_html_or_text)
     parser._flush_buffer()
 
-    # Deduplicate consecutive identical blocks while preserving order and code blocks
     cleaned_blocks: List[str] = []
     for blk in parser.blocks:
-        # Skip redundant H1 if it's the exact first heading and matches title
         if cleaned_blocks and blk == cleaned_blocks[-1]:
             continue
         cleaned_blocks.append(blk)
 
     full_text = "\n\n".join(cleaned_blocks).strip()
 
-    # Fallback if plain text without HTML tags was passed
     if not full_text:
         plain = re.sub(r"<[^>]+>", " ", html.unescape(raw_html_or_text))
         plain = re.sub(r"\s+", " ", plain).strip()
@@ -291,18 +341,18 @@ def extract_and_clean_content(raw_html_or_text: str) -> Tuple[str, Dict[str, Opt
 # ============================================================================
 
 TAG_REGEX_PATTERNS: Dict[str, str] = {
-    "streaming": r"\b(streaming|adaptive bitrate|abr|manifest|hls|dash|media segment|bitstream|uhd)\b",
-    "content delivery": r"\b(content delivery|cdn|cache fill|edge server|bgp|autonomous system|asn|ixp|peering|pacing)\b",
+    "streaming": r"\b(streaming|adaptive bitrate|abr|manifest|hls|dash|media segment|bitstream|uhd|webrtc|live)\b",
+    "content delivery": r"\b(content delivery|cdn|cache fill|edge server|bgp|autonomous system|asn|ixp|peering|pacing|quic|http/3)\b",
     "Open Connect": r"\b(open connect|oca|open connect appliance|isp-embedded)\b",
-    "video encoding": r"\b(video encoding|encode|encoder|codec|quantization|convex hull|rate-distortion|vmaf|av1|hevc|h\.264|shot-based|per-title|dynamic optimizer|hdr)\b",
-    "recommendation": r"\b(recommendation|recommender|top-n|video ranker|personalized video ranker|pvr)\b",
-    "personalization": r"\b(personalization|personalize|personalized|homepage grid|member retention)\b",
-    "machine learning": r"\b(machine learning|neural|svm|support vector machine|regressor|model training|forecasting|embeddings)\b",
-    "search": r"\b(search|search query|search results|query embeddings)\b",
-    "experimentation": r"\b(experimentation|a/b|ab test|hypothesis testing)\b",
-    "media infrastructure": r"\b(media infrastructure|transcoding|mezzanine|isobmff|cmaf|fmp4|sei|cloud worker)\b",
-    "playback": r"\b(playback|client player|buffer occupancy|rebuffering|lip-sync|audio-video sync|pts|dolby atmos|spatial audio)\b",
-    "data infrastructure": r"\b(data infrastructure|keystone|kafka|flink|iceberg|event streaming|data warehouse)\b",
+    "video encoding": r"\b(video encoding|encode|encoder|codec|quantization|convex hull|rate-distortion|vmaf|av1|hevc|h\.264|shot-based|per-title|dynamic optimizer|hdr|film grain|downscaling)\b",
+    "recommendation": r"\b(recommendation|recommender|top-n|video ranker|personalized video ranker|pvr|slate)\b",
+    "personalization": r"\b(personalization|personalize|personalized|homepage grid|member retention|artwork|bandit)\b",
+    "machine learning": r"\b(machine learning|neural|svm|support vector machine|regressor|model training|forecasting|embeddings|transformer|bandits)\b",
+    "search": r"\b(search|search query|search results|query embeddings|multimodal)\b",
+    "experimentation": r"\b(experimentation|a/b|ab test|hypothesis testing|interleaving|cuped|causal)\b",
+    "media infrastructure": r"\b(media infrastructure|transcoding|mezzanine|isobmff|cmaf|fmp4|sei|cloud worker|imf|cosmos|encore|splicing|drm|cenc)\b",
+    "playback": r"\b(playback|client player|buffer occupancy|rebuffering|lip-sync|audio-video sync|pts|dolby atmos|spatial audio|xhe-aac|trick-play|seeking)\b",
+    "data infrastructure": r"\b(data infrastructure|keystone|kafka|flink|iceberg|event streaming|data warehouse|evcache|maestro|hollow|titus|zuul)\b",
 }
 
 
@@ -357,7 +407,7 @@ def chunk_document_overlapping(
     overlap_words: int = 20,
 ) -> List[str]:
     """
-    Splits `full_content` into granular overlapping text chunks suitable for vector retrieval
+    Splits `full_content` into granular overlapping text chunks suitable for AlloyDB ScaNN vector retrieval
     while preserving code blocks and coherent sentences.
     """
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", full_content or "") if p.strip()]
@@ -371,7 +421,6 @@ def chunk_document_overlapping(
         p_words = para.split()
         if current_words and len(current_words) + len(p_words) > target_words:
             chunks.append(" ".join(current_words))
-            # Retain trailing overlap window
             current_words = current_words[-overlap_words:] if overlap_words > 0 else []
         current_words.extend(p_words)
 
@@ -381,47 +430,46 @@ def chunk_document_overlapping(
     return chunks
 
 
-# Semantic domain anchor dimensions for 32-d dense vector embeddings
 EMBEDDING_ANCHOR_TERMS: List[List[str]] = [
-    ["streaming", "video", "media", "bitstream"],
+    ["streaming", "video", "media", "bitstream", "live"],
     ["adaptive", "abr", "bitrate", "ladder"],
-    ["switch", "switching", "representation", "profile"],
-    ["manifest", "uri", "session", "token"],
+    ["switch", "switching", "representation", "profile", "steering"],
+    ["manifest", "uri", "session", "token", "playlist", "preload"],
     ["open", "connect", "oca", "appliance"],
-    ["cdn", "delivery", "edge", "cache"],
+    ["cdn", "delivery", "edge", "cache", "coalescing"],
     ["bgp", "asn", "isp", "ixp", "routing", "peering"],
     ["fill", "off-peak", "night", "pre-positioning", "nvme"],
-    ["pacing", "rtt", "congestion", "tls", "freebsd", "socket"],
+    ["pacing", "rtt", "congestion", "tls", "freebsd", "socket", "rack", "bbr"],
     ["encode", "encoding", "encoder", "transcoding"],
     ["per-title", "shot-based", "shot", "dynamic", "optimizer"],
     ["convex", "hull", "rate-distortion", "pareto", "trellis"],
     ["vmaf", "psnr", "perceptual", "quality", "vif", "dlm"],
     ["quantization", "qp", "dqp", "crf", "ctu", "superblock"],
-    ["av1", "hevc", "h.264", "vp9", "codec"],
+    ["av1", "hevc", "h.264", "vp9", "codec", "grain"],
     ["hdr", "10-bit", "luminance", "tone", "sei", "dolby"],
-    ["scene", "cut", "histogram", "keyframe", "idr"],
+    ["scene", "cut", "histogram", "keyframe", "idr", "discontinuity", "splice"],
     ["playback", "client", "player", "smart", "browser"],
     ["buffer", "occupancy", "rebuffering", "startup", "latency"],
     ["telemetry", "qoe", "throughput", "viewport"],
-    ["audio", "atmos", "spatial", "eac-3", "multi-channel"],
+    ["audio", "atmos", "spatial", "eac-3", "multi-channel", "xhe-aac"],
     ["loudness", "dialogue", "crossfading", "gain"],
     ["sync", "synchronization", "lip-sync", "pts", "timestamp"],
-    ["isobmff", "cmaf", "fmp4", "fragmented", "container"],
+    ["isobmff", "cmaf", "fmp4", "fragmented", "container", "partial"],
     ["recommendation", "recommender", "ranker", "pvr", "top-n"],
-    ["personalization", "homepage", "row", "retention"],
-    ["machine", "learning", "svm", "model", "forecasting"],
+    ["personalization", "homepage", "row", "retention", "artwork"],
+    ["machine", "learning", "svm", "model", "forecasting", "bandit", "transformer"],
     ["search", "query", "embeddings", "discovery"],
-    ["experimentation", "a/b", "test", "validation"],
-    ["keystone", "kafka", "flink", "iceberg", "data"],
+    ["experimentation", "a/b", "test", "validation", "interleaving", "cuped"],
+    ["keystone", "kafka", "flink", "iceberg", "data", "evcache", "maestro"],
     ["revenue", "subscribers", "memberships", "premium", "tier"],
-    ["infrastructure", "cloud", "scale", "global"],
+    ["infrastructure", "cloud", "scale", "global", "titus"],
 ]
 
 
 def generate_chunk_embedding(text: str) -> List[float]:
     """
     Generates a deterministic 32-dimensional unit-normalized dense vector embedding
-    for a document chunk or search query.
+    for an AlloyDB document chunk or search query.
     """
     text_low = (text or "").lower()
     tokens = re.findall(r"[a-z0-9\-\.]{2,}", text_low)
@@ -434,7 +482,6 @@ def generate_chunk_embedding(text: str) -> List[float]:
                 hit_score += 1.5
             if term in tokens:
                 hit_score += 1.0
-        # Add deterministic hash micro-feature for lexical specificity
         hash_val = int(hashlib.md5(f"{dim_idx}::{text_low[:120]}".encode("utf-8")).hexdigest()[:6], 16)
         micro = (hash_val % 100) / 2500.0
         vec.append(hit_score + micro)
@@ -444,7 +491,7 @@ def generate_chunk_embedding(text: str) -> List[float]:
 
 
 # ============================================================================
-# 5. QUARANTINE ERROR LOGGING & INGESTION EXECUTION (`initial` / `incremental`)
+# 5. QUARANTINE ERROR LOGGING & ALLOYDB INGESTION EXECUTION
 # ============================================================================
 
 def log_failed_document(
@@ -455,7 +502,7 @@ def log_failed_document(
     error_message: str,
 ) -> None:
     """
-    Inserts or updates a rejected or failed source in the `failed_documents` quarantine table.
+    Inserts or updates a rejected or failed source in the AlloyDB `failed_documents` quarantine table.
     """
     cur = conn.cursor()
     cur.execute(
@@ -478,10 +525,10 @@ def ingest_single_source_entry(
     mode: str = "incremental",
 ) -> Dict[str, Any]:
     """
-    Processes a single source entry through the complete offline prefetch pipeline:
-    Allowlist Validation → Fetch HTML → Clean & Extract Full Content → Metadata & Tags
-    → SHA-256 Duplicate Check (`documents.content_hash` & `documents.source_url`)
-    → Insert Parent `documents` → Chunk & Embed → Insert Child `document_chunks`.
+    Processes a single source entry through the complete offline AlloyDB prefetch pipeline:
+    Allowlist Validation → Medium MCP Server (`mcpmarket.com/server/medium-2`) or Direct Document Extractor
+    → Clean & Extract Full Content → Metadata & Tags → SHA-256 Duplicate Check
+    → Insert Parent `documents` in AlloyDB → Chunk & Embed → Insert Child `document_chunks` in AlloyDB.
     """
     source_url = (entry.get("source_url") or "").strip()
     raw_title = (entry.get("title") or "").strip()
@@ -501,16 +548,17 @@ def ingest_single_source_entry(
             "source_url": source_url,
             "title": raw_title or "Unapproved Source URL",
             "status": "FAILED_QUARANTINED",
+            "fetch_method": "REJECTED_BY_ALLOWLIST",
             "detail": allow_msg,
             "chunks_created": 0,
         }
 
     source_type = matched_cfg["source_type"]
 
-    # Step 2: Check URL-level duplicate in `documents`
+    # Step 2: Check URL-level duplicate in AlloyDB `documents`
     cur = conn.cursor()
     cur.execute(
-        "SELECT document_id, content_hash FROM documents WHERE source_url = ?;",
+        "SELECT document_id, content_hash, fetch_method FROM documents WHERE source_url = ?;",
         (source_url,),
     )
     existing_by_url = cur.fetchone()
@@ -520,13 +568,17 @@ def ingest_single_source_entry(
             "source_url": source_url,
             "title": raw_title,
             "source_type": source_type,
+            "fetch_method": existing_by_url["fetch_method"],
             "status": "SKIPPED_EXISTING_URL",
-            "detail": f"Source URL already indexed in `documents` ({existing_by_url['document_id']}).",
+            "detail": f"Source URL already indexed in AlloyDB `documents` ({existing_by_url['document_id']}).",
             "chunks_created": 0,
         }
 
-    # Step 3: Fetch HTML
-    fetch_ok, fetch_code, raw_html = fetch_html_from_source(entry, allow_network=False)
+    # Step 3: Fetch via Medium MCP Server (for netflixtechblog.medium.com & netflixtechblog.com)
+    # or Direct Document Extractor (for openconnect / research / github docs)
+    fetch_ok, fetch_code, raw_html, fetch_method, mcp_tool_used = fetch_from_source_or_medium_mcp(
+        entry, allow_network=False
+    )
     if not fetch_ok:
         log_failed_document(
             conn=conn,
@@ -539,6 +591,7 @@ def ingest_single_source_entry(
             "source_url": source_url,
             "title": raw_title or source_url,
             "source_type": source_type,
+            "fetch_method": fetch_method,
             "status": "FAILED_QUARANTINED",
             "detail": f"{fetch_code}: {raw_html}",
             "chunks_created": 0,
@@ -559,6 +612,7 @@ def ingest_single_source_entry(
             "source_url": source_url,
             "title": raw_title or source_url,
             "source_type": source_type,
+            "fetch_method": fetch_method,
             "status": "FAILED_QUARANTINED",
             "detail": msg,
             "chunks_created": 0,
@@ -568,7 +622,7 @@ def ingest_single_source_entry(
     final_author = entry.get("author") or html_meta.get("author")
     final_pub_date = entry.get("published_date") or html_meta.get("published_date")
 
-    # Step 5: SHA-256 Content-Hash Duplicate Check against `documents.content_hash`
+    # Step 5: SHA-256 Content-Hash Duplicate Check against AlloyDB `documents.content_hash`
     content_hash = compute_content_hash(full_content)
     cur.execute(
         "SELECT document_id, source_url, title FROM documents WHERE content_hash = ? AND source_url != ?;",
@@ -581,9 +635,10 @@ def ingest_single_source_entry(
             "source_url": source_url,
             "title": final_title,
             "source_type": source_type,
+            "fetch_method": fetch_method,
             "status": "SKIPPED_SHA256_DUPLICATE",
             "detail": (
-                f"SHA-256 content_hash ({content_hash[:12]}...) matches already-ingested document "
+                f"SHA-256 content_hash ({content_hash[:12]}...) matches already-ingested AlloyDB document "
                 f"'{duplicate_doc['title']}' ({duplicate_doc['source_url']})."
             ),
             "chunks_created": 0,
@@ -593,14 +648,15 @@ def ingest_single_source_entry(
     candidate_tags, primary_tech_area = extract_candidate_tags(final_title, full_content)
     doc_id = compute_document_id(company, source_url)
 
-    # Step 7: Store Full Document in Parent Table `documents`
+    # Step 7: Store Full Document in AlloyDB Parent Table `documents`
     cur.execute(
         """
         INSERT INTO documents (
             document_id, company, title, source_url, source_type,
-            published_date, author, full_content, technology_area, content_hash, created_at
+            published_date, author, full_content, technology_area, content_hash,
+            fetch_method, mcp_tool_used, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(source_url) DO UPDATE SET
             title = excluded.title,
             source_type = excluded.source_type,
@@ -608,7 +664,9 @@ def ingest_single_source_entry(
             author = excluded.author,
             full_content = excluded.full_content,
             technology_area = excluded.technology_area,
-            content_hash = excluded.content_hash;
+            content_hash = excluded.content_hash,
+            fetch_method = excluded.fetch_method,
+            mcp_tool_used = excluded.mcp_tool_used;
         """,
         (
             doc_id,
@@ -621,10 +679,12 @@ def ingest_single_source_entry(
             full_content,
             primary_tech_area,
             content_hash,
+            fetch_method,
+            mcp_tool_used,
         ),
     )
 
-    # Step 8: Chunk Full Document into Overlapping Windows & Generate Embeddings
+    # Step 8: Chunk Full Document into Overlapping Windows & Generate AlloyDB ScaNN Embeddings
     cur.execute("DELETE FROM document_chunks WHERE document_id = ?;", (doc_id,))
     chunk_texts = chunk_document_overlapping(full_content, target_words=85, overlap_words=20)
 
@@ -651,15 +711,22 @@ def ingest_single_source_entry(
             ),
         )
 
+    channel_label = (
+        f"via Medium MCP Server ({mcp_tool_used})"
+        if fetch_method == "MEDIUM_MCP_SERVER"
+        else "via Direct Document Extractor"
+    )
     return {
         "document_id": doc_id,
         "source_url": source_url,
         "title": final_title,
         "source_type": source_type,
+        "fetch_method": fetch_method,
+        "mcp_tool_used": mcp_tool_used,
         "status": "INGESTED" if not existing_by_url else "UPDATED",
         "detail": (
-            f"Stored full_content ({len(full_content)} chars) in `documents` and "
-            f"{len(chunk_texts)} overlapping embedded chunks in `document_chunks`."
+            f"Ingested {channel_label} -> Stored full_content ({len(full_content)} chars) in AlloyDB `documents` "
+            f"and {len(chunk_texts)} embedded vector(32) chunks in AlloyDB `document_chunks`."
         ),
         "chunks_created": len(chunk_texts),
         "technology_area": primary_tech_area,
@@ -673,7 +740,8 @@ def run_prefetch_pipeline(
     custom_documents: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    Executes the Offline Target Knowledge Prefetch Pipeline in either `initial` or `incremental` mode.
+    Executes the Offline Target Knowledge Prefetch Pipeline into Google Cloud AlloyDB in either
+    `initial` or `incremental` mode.
     """
     clean_mode = "initial" if mode == "initial" and not custom_documents else "incremental"
     init_target_knowledge_db(db_path=db_path, reset=(clean_mode == "initial"))
@@ -747,8 +815,8 @@ def get_target_knowledge_status(
     db_path: str = DB_PATH,
 ) -> Dict[str, Any]:
     """
-    Returns the complete state of the 2-tier relational database (`documents`, `document_chunks`,
-    `failed_documents`, and `ingestion_runs`) for inspection in the UI and CLI.
+    Returns the complete state of the AlloyDB 2-tier relational database (`documents`, `document_chunks`,
+    `failed_documents`, and `ingestion_runs`) plus AlloyDB ScaNN & Medium MCP Server metadata.
     """
     init_target_knowledge_db(db_path=db_path, reset=False)
     conn = get_db_connection(db_path)
@@ -759,7 +827,8 @@ def get_target_knowledge_status(
     finally:
         conn.close()
 
-    if doc_count == 0:
+    # Ensure the expanded 50+ Netflix corpus is populated in AlloyDB
+    if doc_count < 50:
         return run_prefetch_pipeline(mode="initial", db_path=db_path)
 
     conn = get_db_connection(db_path)
@@ -780,6 +849,8 @@ def get_target_knowledge_status(
                 d.full_content,
                 d.technology_area,
                 d.content_hash,
+                d.fetch_method,
+                d.mcp_tool_used,
                 d.created_at,
                 COUNT(c.chunk_id) AS chunk_count
             FROM documents d
@@ -810,6 +881,8 @@ def get_target_knowledge_status(
                 d.author,
                 d.technology_area,
                 d.content_hash,
+                d.fetch_method,
+                d.mcp_tool_used,
                 d.created_at
             FROM document_chunks c
             INNER JOIN documents d ON d.document_id = c.document_id
@@ -857,13 +930,25 @@ def get_target_knowledge_status(
     finally:
         conn.close()
 
-    # Format documents and compute tag distribution
+    # Format documents and compute tag + MCP counts
     tag_distribution: Dict[str, int] = {t: 0 for t in APPROVED_TECHNOLOGY_TAGS}
+    mcp_docs_count = 0
+    direct_docs_count = 0
     formatted_docs: List[Dict[str, Any]] = []
+
     for d in doc_rows:
         doc_tags, _ = extract_candidate_tags(d["title"] or "", d["full_content"] or "")
         for t in doc_tags:
             tag_distribution[t] = tag_distribution.get(t, 0) + 1
+
+        f_method = d.get("fetch_method") or (
+            "MEDIUM_MCP_SERVER" if is_medium_publication_url(d["source_url"]) else "DIRECT_DOCUMENT_EXTRACTOR"
+        )
+        if f_method == "MEDIUM_MCP_SERVER":
+            mcp_docs_count += 1
+        else:
+            direct_docs_count += 1
+
         formatted_docs.append({
             "document_id": d["document_id"],
             "company": d["company"],
@@ -875,6 +960,12 @@ def get_target_knowledge_status(
             "content": d["full_content"],
             "full_content": d["full_content"],
             "content_hash": d["content_hash"],
+            "fetch_method": f_method,
+            "mcp_tool_used": d.get("mcp_tool_used") or (
+                "medium_get_article_content (https://mcpmarket.com/server/medium-2)"
+                if f_method == "MEDIUM_MCP_SERVER"
+                else "direct_html_extractor"
+            ),
             "technology_area": d["technology_area"],
             "candidate_tags": doc_tags,
             "chunk_count": d["chunk_count"],
@@ -922,6 +1013,8 @@ def get_target_knowledge_status(
             "embedding": c_emb,
             "candidate_tags": c_tags,
             "content_hash": ch["content_hash"],
+            "fetch_method": ch.get("fetch_method") or "MEDIUM_MCP_SERVER",
+            "mcp_tool_used": ch.get("mcp_tool_used"),
             "ingested_at": ch["created_at"],
             "similarity_score": sim_score,
         })
@@ -932,16 +1025,20 @@ def get_target_knowledge_status(
     return {
         "status": "READY",
         "company": company or TARGET_COMPANY,
-        "database_path": "target_prefetch/target_knowledge.sqlite",
+        "database_path": ALLOYDB_URI_DISPLAY,
+        "alloydb_config": get_alloydb_config_metadata(),
+        "medium_mcp_config": get_medium_mcp_config_metadata(total_mcp_articles=mcp_docs_count),
         "schema_architecture": {
-            "parent_table": "documents (document_id PK, company, title, source_url UNIQUE, source_type, published_date, author, full_content, technology_area, content_hash, created_at)",
-            "child_table": "document_chunks (chunk_id PK '{document_id}_chunk_{index}', document_id FK -> documents.document_id, chunk_index, content, embedding, candidate_tags)",
+            "parent_table": "documents (document_id PK, company, title, source_url UNIQUE, source_type, published_date, author, full_content, technology_area, content_hash, fetch_method, mcp_tool_used, created_at)",
+            "child_table": "document_chunks (chunk_id PK '{document_id}_chunk_{index}', document_id FK -> documents.document_id, chunk_index, content, embedding vector(32) ScaNN, candidate_tags JSONB)",
             "quarantine_table": "failed_documents (source_url PK, title, error_code, error_message, logged_at)",
         },
         "configured_sources": APPROVED_SOURCE_CONFIGS,
         "approved_technology_taxonomy": APPROVED_TECHNOLOGY_TAGS,
         "summary_metrics": {
             "total_documents_stored": len(formatted_docs),
+            "medium_mcp_documents_stored": mcp_docs_count,
+            "direct_extractor_documents_stored": direct_docs_count,
             "total_chunks_stored": len(raw_chunks),
             "filtered_chunks_returned": len(formatted_chunks),
             "failed_documents_logged": len(failed_rows),

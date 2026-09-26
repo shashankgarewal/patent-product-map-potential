@@ -18,6 +18,7 @@ import re
 import sqlite3
 from typing import Dict, Any, List, Optional, Tuple
 
+from target_prefetch.db import get_db_connection
 from target_prefetch.pipeline import DB_PATH, initialize_database, run_prefetch_pipeline
 
 
@@ -147,16 +148,14 @@ def retrieve_commercial_intelligence_tool(
     from `target_knowledge.sqlite` without crawling the web or fabricating product revenue.
     """
     initialize_database()
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = get_db_connection(DB_PATH)
     cur = conn.cursor()
 
     cur.execute("SELECT COUNT(*) AS cnt FROM documents")
-    if int(cur.fetchone()["cnt"]) == 0:
+    if int(cur.fetchone()["cnt"]) < 50:
         conn.close()
         run_prefetch_pipeline(mode="initial")
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = get_db_connection(DB_PATH)
         cur = conn.cursor()
 
     company_norm = (target_company or "").strip()

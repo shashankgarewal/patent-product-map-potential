@@ -171,6 +171,8 @@ export interface TargetKnowledgeChunk {
   candidate_tags?: string[];
   chunk_index?: number;
   content_hash?: string;
+  fetch_method?: string;
+  mcp_tool_used?: string;
   ingested_at?: string;
   similarity_score?: number;
 }
@@ -184,7 +186,10 @@ export interface TargetKnowledgeDocument {
   published_date: string | null;
   author: string | null;
   content: string;
+  full_content?: string;
   content_hash: string;
+  fetch_method?: string;
+  mcp_tool_used?: string;
   technology_area: string | null;
   candidate_tags: string[];
   chunk_count: number;
@@ -218,6 +223,8 @@ export interface IngestionRunRecord {
     source_url: string;
     title: string;
     source_type?: string;
+    fetch_method?: string;
+    mcp_tool_used?: string;
     status: string;
     detail?: string;
     chunks_created?: number;
@@ -230,16 +237,41 @@ export interface TargetKnowledgeResponse {
   status: string;
   company: string;
   database_path: string;
+  alloydb_config?: {
+    engine: string;
+    vector_extension: string;
+    instance_uri: string;
+    database_name: string;
+    connection_uri_display: string;
+    connection_mode: string;
+    ddl_preview: string;
+  };
+  medium_mcp_config?: {
+    server_id: string;
+    server_name: string;
+    registry_url: string;
+    protocol_version: string;
+    handled_domains: string[];
+    direct_url_scraping_disabled: boolean;
+    articles_ingested_via_mcp: number;
+    tools: {
+      name: string;
+      description: string;
+    }[];
+  };
   configured_sources: {
     source_id: string;
     name: string;
     url_prefix: string;
     source_type: string;
+    ingestion_protocol?: string;
     approval_status: string;
   }[];
   approved_technology_taxonomy: string[];
   summary_metrics: {
     total_documents_stored: number;
+    medium_mcp_documents_stored?: number;
+    direct_extractor_documents_stored?: number;
     total_chunks_stored: number;
     filtered_chunks_returned: number;
     failed_documents_logged: number;
