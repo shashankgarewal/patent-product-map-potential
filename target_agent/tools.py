@@ -14,16 +14,65 @@ import sqlite3
 from typing import Dict, Any, List, Optional
 
 from target_prefetch.db import get_db_connection
+from target_prefetch.sources_config import (
+    PREFETCH_DOCUMENT_COUNT,
+    EMBEDDING_MODEL_NAME,
+    EMBEDDING_DIMENSIONS,
+)
 from target_prefetch.pipeline import (
     DB_PATH,
     init_target_knowledge_db,
     run_prefetch_pipeline,
     generate_chunk_embedding,
+    dynamic_fetch_and_embed_target_docs,
 )
 
 
 # Domain query expansion rules to generate multiple retrieval queries from client patent concepts
 CONCEPT_QUERY_EXPANSIONS: Dict[str, List[str]] = {
+    "recommendation": [
+        "Personalized Video Ranker PVR Top-N video ranker",
+        "two-stage homepage page generation row ranking submodular diversity",
+        "calibrated recommendations KL-divergence multi-objective ranking",
+        "collaborative filtering two-tower neural candidate generation",
+    ],
+    "personalization": [
+        "personalized homepage canvas row ranking PVR",
+        "contextual bandits AVA artwork visual personalization",
+        "session-based sequential recommendation short-term intent",
+        "member retention utility multi-task Hydra ranking",
+    ],
+    "ranking": [
+        "Personalized Video Ranker PVR Caret scoring",
+        "Top-N Video Ranker head-of-catalog ranking",
+        "two-dimensional page generation stage-wise row selection",
+        "team-draft interleaving online ranking evaluation",
+    ],
+    "bandit": [
+        "contextual bandits personalized artwork selection LinUCB Thompson sampling",
+        "inverse propensity weighting IPW doubly robust offline evaluation",
+        "AVA visual aesthetics frame selection explore-exploit",
+    ],
+    "artwork": [
+        "contextual bandits personalized artwork thumbnail selection",
+        "AVA Automated Visual Aesthetics visual metadata tagging",
+        "actor genre visual preference matching",
+    ],
+    "session": [
+        "session-based sequential recommendation real-time intent adaptation",
+        "causal Transformer encoder in-session interaction events",
+        "Axion Flink EVCache sub-second streaming feature store",
+    ],
+    "collaborative": [
+        "matrix factorization ALS Bayesian Personalized Ranking BPR",
+        "two-tower member and item embedding ScaNN HNSW retrieval",
+        "bipartite user-title GraphSAGE GNN cold-start representation",
+    ],
+    "search": [
+        "personalized lexical and semantic search query intent",
+        "pre-query instant suggestions bi-encoder cross-encoder ranking",
+        "multimodal title embeddings catalog discovery",
+    ],
     "adaptive": [
         "adaptive streaming",
         "bitrate selection",
@@ -98,19 +147,31 @@ CONCEPT_QUERY_EXPANSIONS: Dict[str, List[str]] = {
 
 def ensure_knowledge_base_seeded() -> None:
     """
-    Ensures the pre-fetched AlloyDB target knowledge store is initialized with the 50+ Netflix corpus before searching.
-    Never performs runtime web crawling.
+    Ensures the pre-fetched AlloyDB target knowledge store is initialized with the configured
+    `PREFETCH_DOCUMENT_COUNT` corpus and 768-d `text-embedding-004` vectors before searching.
     """
     init_target_knowledge_db(DB_PATH)
     conn = get_db_connection(DB_PATH)
+    needs_reseed = False
     try:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) AS cnt FROM documents")
         count = int(cur.fetchone()["cnt"])
+        if count == 0:
+            needs_reseed = True
+        else:
+            cur.execute("SELECT embedding FROM document_chunks LIMIT 1")
+            row = cur.fetchone()
+            if not row:
+                needs_reseed = True
+            else:
+                emb = json.loads(row["embedding"] or "[]")
+                if len(emb) != EMBEDDING_DIMENSIONS:
+                    needs_reseed = True
     finally:
         conn.close()
 
-    if count < 50:
+    if needs_reseed:
         run_prefetch_pipeline(mode="initial", db_path=DB_PATH)
 
 
@@ -120,14 +181,16 @@ def search_target_knowledge(
     technology_area: Optional[str] = None,
     top_k: int = 5,
     source_type: Optional[str] = None,
+    _is_retry: bool = False,
 ) -> Dict[str, Any]:
     """
     Deterministic database search tool for the Target Retrieval Agent.
-    Searches the pre-fetched AlloyDB knowledge store using hybrid:
+    Searches the AlloyDB knowledge store using hybrid:
     1. Keyword / lexical matching across title, content, and candidate_tags
-    2. Semantic 32-d vector cosine similarity (`embedding` ScaNN index)
-    3. Metadata filtering (`target_company`, optional `technology_area` soft/hard boost)
-    4. Optional `source_type` filtering
+    2. Semantic 768-d `text-embedding-004` vector cosine similarity (`embedding` ScaNN index)
+    3. Metadata filtering (`target_company`, optional `technology_area` boost)
+    4. Dynamic On-Demand Target Documentation Fetch & `text-embedding-004` AlloyDB Ingestion
+       when the currently prefetched AlloyDB documents have no match for `query`.
     """
     ensure_knowledge_base_seeded()
 
@@ -183,7 +246,7 @@ def search_target_knowledge(
     if not q_tokens and q_clean:
         q_tokens = [t for t in re.findall(r"[a-z0-9\-]{2,}", q_clean)]
 
-    q_emb = generate_chunk_embedding(q_clean) if q_clean else None
+    q_emb = generate_chunk_embedding(q_clean, task_type="RETRIEVAL_QUERY") if q_clean else None
     tech_norm = (technology_area or "").strip().lower()
     tech_tokens = [t for t in re.findall(r"[a-z0-9\-]{3,}", tech_norm) if t not in {"optional", "all", "none"}]
 
@@ -205,7 +268,7 @@ def search_target_knowledge(
         matched_tokens = [tok for tok in q_tokens if tok in full_text]
         token_Coverage = (len(matched_tokens) / max(1, len(q_tokens))) if q_tokens else 0.0
 
-        # 2. Vector embedding cosine similarity (32-d)
+        # 2. Vector embedding cosine similarity (768-d text-embedding-004)
         vector_sim = sum(a * b for a, b in zip(q_emb, emb)) if (q_emb and emb) else 0.0
 
         # 3. Technology area metadata alignment
@@ -248,11 +311,42 @@ def search_target_knowledge(
             "retrieval_score": combined_score,
             "keyword_score": round((phrase_hit * 0.4) + (token_Coverage * 0.6), 3),
             "vector_similarity": round(vector_sim, 3),
+            "embedding_model": EMBEDDING_MODEL_NAME,
+            "embedding_dimensions": len(emb) or EMBEDDING_DIMENSIONS,
             "matched_tokens": matched_tokens,
             "matched_query": query,
         })
 
     scored_results.sort(key=lambda x: x["retrieval_score"], reverse=True)
+
+    # Dynamic On-Demand Target Documentation Fetch & text-embedding-004 AlloyDB Ingestion:
+    # When the prefetched AlloyDB documents have no match (or weak match) for this query,
+    # fetch relevant Netflix documentation, embed with text-embedding-004 (768-d) into AlloyDB, and re-query.
+    if (
+        not _is_retry
+        and (company_base.lower() == "netflix" or "netflix" in company_norm.lower())
+        and (len(scored_results) == 0 or scored_results[0]["retrieval_score"] < 0.36)
+    ):
+        dyn_res = dynamic_fetch_and_embed_target_docs(
+            target_company=target_company,
+            query=query,
+            technology_area=technology_area,
+            max_new_docs=3,
+            db_path=DB_PATH,
+        )
+        if dyn_res.get("newly_ingested_count", 0) > 0:
+            retry_out = search_target_knowledge(
+                target_company=target_company,
+                query=query,
+                technology_area=technology_area,
+                top_k=top_k,
+                source_type=source_type,
+                _is_retry=True,
+            )
+            retry_out["dynamic_prefetch_triggered"] = dyn_res
+            retry_out["dynamic_fetch_and_embedding"] = dyn_res
+            return retry_out
+
     top_results = scored_results[: max(1, int(top_k))]
 
     return {
@@ -288,7 +382,15 @@ def build_multi_queries_from_patent_context(
     if technology_area and technology_area.strip().lower() not in ("", "optional", "all"):
         area_clean = technology_area.strip()
         add_query(area_clean, f"Primary requested technology niche ('{area_clean}')")
-        if "streaming" in area_clean.lower():
+        area_low = area_clean.lower()
+        if "recommend" in area_low or "personal" in area_low or "ranking" in area_low or "discovery" in area_low:
+            add_query("Personalized Video Ranker PVR Top-N", "Multi-query expansion for Netflix recommendation ranking")
+            add_query("two-stage homepage page generation row ranking", "Multi-query expansion for 2D canvas personalization")
+            add_query("contextual bandits personalized artwork AVA", "Multi-query expansion for visual artwork personalization")
+            add_query("session-based sequential recommendation intent", "Multi-query expansion for real-time session Transformer")
+            add_query("collaborative filtering two-tower embedding retrieval", "Multi-query expansion for neural candidate generation")
+        if "streaming" in area_low or "video" in area_low:
+            add_query("Personalized Video Ranker PVR recommendation", "Multi-query expansion for personalized video catalog ranking")
             add_query("adaptive streaming", "Multi-query expansion from video streaming niche")
             add_query("bitrate selection", "Multi-query expansion from adaptive bitrate concepts")
             add_query("video delivery", "Multi-query expansion for CDN / Open Connect delivery")

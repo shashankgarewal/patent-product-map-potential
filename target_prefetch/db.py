@@ -65,6 +65,15 @@ except ImportError:
     psycopg = None
 
 
+from target_prefetch.sources_config import (
+    PREFETCH_DOCUMENT_COUNT,
+    PREFETCH_FOCUS_AREA,
+    EMBEDDING_MODEL_NAME,
+    EMBEDDING_DIMENSIONS,
+    CHUNK_SIZE_WORDS,
+    CHUNK_OVERLAP_WORDS,
+)
+
 ALLOYDB_INSTANCE_URI = os.environ.get(
     "ALLOYDB_INSTANCE_URI",
     "projects/patent-intelligence-engine/locations/us-central1/clusters/alloydb-ip-cluster/instances/primary-vector-node",
@@ -86,7 +95,7 @@ ALLOYDB_DDL_SQL = """
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS alloydb_scann;
 
--- 1. Parent Table: Full Untruncated Target Documents
+-- 1. Parent Table: Full Untruncated Target Documents (PREFETCH_DOCUMENT_COUNT = 10)
 CREATE TABLE IF NOT EXISTS documents (
     document_id TEXT PRIMARY KEY,
     company TEXT DEFAULT 'Netflix',
@@ -110,17 +119,18 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Child Table: Granular Vector-Embedded Chunks
+-- 2. Child Table: Granular Chunks with text-embedding-004 (vector(768))
 CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(32) NOT NULL,
+    embedding vector(768) NOT NULL,
+    embedding_model TEXT DEFAULT 'text-embedding-004',
     candidate_tags JSONB NOT NULL
 );
 
--- AlloyDB ScaNN Vector Index for Cosine Similarity Search (<=>)
+-- AlloyDB ScaNN Vector Index for text-embedding-004 Cosine Similarity Search (<=>)
 CREATE INDEX IF NOT EXISTS idx_document_chunks_alloydb_scann
     ON document_chunks USING scann (embedding cosine)
     WITH (num_leaves = 16);
@@ -156,12 +166,19 @@ def _has_live_alloydb_credentials() -> bool:
 
 def get_alloydb_config_metadata() -> Dict[str, Any]:
     """
-    Returns structured metadata describing the AlloyDB for PostgreSQL cluster and ScaNN vector index.
+    Returns structured metadata describing the AlloyDB for PostgreSQL cluster, `text-embedding-004`
+    768-d ScaNN vector index, and configurable prefetch parameters.
     """
     is_live = _has_live_alloydb_credentials()
     return {
         "engine": "Google Cloud AlloyDB for PostgreSQL",
-        "vector_extension": "pgvector + alloydb_scann (Cosine Distance <=>, 32-d Dense Embeddings)",
+        "vector_extension": f"pgvector + alloydb_scann ({EMBEDDING_MODEL_NAME}, vector({EMBEDDING_DIMENSIONS}) Cosine <=>)",
+        "embedding_model": EMBEDDING_MODEL_NAME,
+        "embedding_dimensions": EMBEDDING_DIMENSIONS,
+        "prefetch_document_count": PREFETCH_DOCUMENT_COUNT,
+        "prefetch_focus_area": PREFETCH_FOCUS_AREA,
+        "chunk_size_words": CHUNK_SIZE_WORDS,
+        "chunk_overlap_words": CHUNK_OVERLAP_WORDS,
         "instance_uri": ALLOYDB_INSTANCE_URI,
         "database_name": ALLOYDB_DB,
         "connection_uri_display": ALLOYDB_URI_DISPLAY,
@@ -225,6 +242,10 @@ def init_target_knowledge_db(db_path: str = DB_PATH, reset: bool = False) -> Non
             cols = {row["name"] for row in cur.fetchall()}
             if "full_content" not in cols or "fetch_method" not in cols:
                 needs_migration = True
+            cur.execute("PRAGMA table_info(document_chunks);")
+            chunk_cols = {row["name"] for row in cur.fetchall()}
+            if "embedding_model" not in chunk_cols:
+                needs_migration = True
 
         if reset or needs_migration:
             cur.execute("DROP TABLE IF EXISTS document_chunks;")
@@ -261,7 +282,7 @@ def init_target_knowledge_db(db_path: str = DB_PATH, reset: bool = False) -> Non
             """
         )
 
-        # 2. Child Table: `document_chunks`
+        # 2. Child Table: `document_chunks` (stores 768-d text-embedding-004 vectors)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS document_chunks (
@@ -270,6 +291,7 @@ def init_target_knowledge_db(db_path: str = DB_PATH, reset: bool = False) -> Non
                 chunk_index INTEGER NOT NULL,
                 content TEXT NOT NULL,
                 embedding TEXT NOT NULL,
+                embedding_model TEXT DEFAULT 'text-embedding-004',
                 candidate_tags TEXT NOT NULL
             );
             """

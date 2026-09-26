@@ -22,6 +22,34 @@ export default function TargetPrefetchView() {
   const [selectedChunk, setSelectedChunk] = useState<TargetKnowledgeChunk | null>(null);
   const [copiedChunk, setCopiedChunk] = useState<boolean>(false);
   const [subTab, setSubTab] = useState<"chunks" | "documents" | "sources" | "logs">("chunks");
+  const [mcpRpcResult, setMcpRpcResult] = useState<any | null>(null);
+  const [testingMcp, setTestingMcp] = useState<boolean>(false);
+
+  const testLocalMcpServer = async () => {
+    setTestingMcp(true);
+    try {
+      const res = await fetch("/api/mcp/medium", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "ui_test_1",
+          method: "tools/call",
+          params: {
+            name: "medium_list_publication_articles",
+            arguments: {
+              publication: "netflixtechblog",
+              limit: 5,
+            },
+          },
+        }),
+      });
+      const json = await res.json();
+      setMcpRpcResult(json);
+    } finally {
+      setTestingMcp(false);
+    }
+  };
 
   const fetchStatus = async (q = searchQuery, tag = selectedTag, st = selectedSourceType) => {
     setLoading(true);
@@ -115,16 +143,22 @@ export default function TargetPrefetchView() {
             </div>
 
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-              AlloyDB Pre-Fetched Target Knowledge Database: Netflix ({data?.summary_metrics.total_documents_stored ?? 52} Documents)
+              AlloyDB Pre-Fetched Target Knowledge Database: Netflix ({data?.summary_metrics.total_documents_stored ?? 10} Documents · Focus:{" "}
+              {data?.prefetch_config?.prefetch_focus_area || "recommendation"})
             </h2>
 
             <p className="text-xs text-slate-600 max-w-4xl leading-relaxed">
               Offline ingestion pipeline backed by{" "}
-              <strong className="text-slate-900">Google Cloud AlloyDB for PostgreSQL (`pgvector` + `alloydb_scann`)</strong>.
+              <strong className="text-slate-900">Google Cloud AlloyDB for PostgreSQL (`pgvector` + `alloydb_scann`)</strong> with{" "}
+              <strong className="text-blue-700">`text-embedding-004` (`vector(768)`)</strong> embeddings and configurable{" "}
+              <span className="font-mono font-semibold text-slate-900">
+                PREFETCH_DOCUMENT_COUNT={data?.prefetch_config?.prefetch_document_count ?? 10}
+              </span>{" "}
+              (<span className="font-mono">{data?.prefetch_config?.chunk_size_words ?? 180}</span>-word chunks with{" "}
+              <span className="font-mono">{data?.prefetch_config?.chunk_overlap_words ?? 35}</span>-word overlap).
               Medium articles on <span className="font-mono text-slate-800">https://netflixtechblog.medium.com/</span> and{" "}
               <span className="font-mono text-slate-800">https://netflixtechblog.com/</span> are retrieved exclusively via the{" "}
-              <strong className="text-indigo-700">Medium MCP Server (`https://mcpmarket.com/server/medium-2`)</strong>{" "}
-              (<span className="font-mono">medium_get_article_content</span> over JSON-RPC 2.0) instead of raw URL scraping, then cleaned, tagged, chunked, embedded, and deduplicated via SHA-256 content hashes.
+              <strong className="text-indigo-700">Medium MCP Server (`https://mcpmarket.com/server/medium-2`)</strong>.
             </p>
           </div>
 
@@ -147,7 +181,9 @@ export default function TargetPrefetchView() {
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#0B0F19] rounded-lg hover:bg-slate-800 disabled:opacity-50 transition-colors cursor-pointer"
             >
               <Play className="w-3.5 h-3.5" />
-              <span>Re-Run Full 52-Doc AlloyDB Prefetch</span>
+              <span>
+                Re-Run Configured ({data?.prefetch_config?.prefetch_document_count ?? 10}-Doc) AlloyDB Prefetch
+              </span>
             </button>
           </div>
         </div>
@@ -155,7 +191,7 @@ export default function TargetPrefetchView() {
         {/* Pipeline Stage Flow Strip */}
         <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px] font-mono text-slate-600">
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            1. Strict 5-Source Allowlist
+            1. PREFETCH_DOCUMENT_COUNT={data?.prefetch_config?.prefetch_document_count ?? 10} (Recommendation)
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-indigo-50 text-indigo-800 rounded font-semibold">
@@ -167,11 +203,11 @@ export default function TargetPrefetchView() {
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            4. SHA-256 Duplicate Check
+            4. {data?.prefetch_config?.chunk_size_words ?? 180}w / {data?.prefetch_config?.chunk_overlap_words ?? 35}w Overlap Chunking
           </span>
           <span>→</span>
-          <span className="px-2 py-1 bg-slate-100 rounded text-slate-800 font-semibold">
-            5. Overlapping Chunking & 32-d Embedding
+          <span className="px-2 py-1 bg-blue-50 text-blue-800 rounded font-semibold">
+            5. `text-embedding-004` (`vector(768)`)
           </span>
           <span>→</span>
           <span className="px-2 py-1 bg-emerald-50 text-emerald-800 rounded font-semibold">
@@ -207,10 +243,12 @@ export default function TargetPrefetchView() {
               <span className="text-3xl font-bold font-mono tabular-nums text-blue-600">
                 {data.summary_metrics.total_chunks_stored}
               </span>
-              <span className="text-xs text-blue-700 font-medium">vector(32) chunks</span>
+              <span className="text-xs text-blue-700 font-medium">
+                vector({data.prefetch_config?.embedding_dimensions ?? 768}) chunks
+              </span>
             </div>
             <div className="text-[11px] text-slate-500">
-              Indexed via AlloyDB `alloydb_scann` cosine similarity
+              `{data.prefetch_config?.embedding_model || "text-embedding-004"}` · {data.prefetch_config?.chunk_size_words ?? 180}w/{data.prefetch_config?.chunk_overlap_words ?? 35}w overlap
             </div>
           </div>
 
@@ -547,9 +585,9 @@ export default function TargetPrefetchView() {
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400">vector(32) dims:</span>{" "}
+                    <span className="text-slate-400">text-embedding-004:</span>{" "}
                     <span className="text-slate-900 font-semibold">
-                      {selectedChunk.embedding.length} floats (ScaNN)
+                      vector({selectedChunk.embedding.length}) (ScaNN)
                     </span>
                   </div>
                 </div>
@@ -682,8 +720,8 @@ export default function TargetPrefetchView() {
                 <span className="text-[11px] font-mono font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded">
                   MEDIUM MCP SERVER (JSON-RPC 2.0)
                 </span>
-                <span className="font-mono text-xs text-slate-500">
-                  {data.medium_mcp_config?.protocol_version}
+                <span className="font-mono text-xs text-emerald-700 font-semibold">
+                  {data.medium_mcp_config?.transport_status || data.medium_mcp_config?.protocol_version}
                 </span>
               </div>
               <h3 className="text-base font-bold text-slate-900">
@@ -701,8 +739,42 @@ export default function TargetPrefetchView() {
                 </a>
                 . Instead of scraping Medium URLs directly, all articles under{" "}
                 <span className="font-mono">https://netflixtechblog.medium.com/</span> and{" "}
-                <span className="font-mono">https://netflixtechblog.com/</span> are retrieved via MCP tool invocations.
+                <span className="font-mono">https://netflixtechblog.com/</span> are retrieved via the local MCP server.
               </p>
+
+              {/* Environment Variables Box */}
+              <div className="p-3 bg-slate-950 text-slate-100 rounded-lg font-mono text-[11px] space-y-1.5">
+                <div className="flex items-center justify-between text-[10px] text-slate-400 uppercase tracking-wider">
+                  <span>Configured Environment Variables (.env)</span>
+                  <button
+                    type="button"
+                    onClick={testLocalMcpServer}
+                    disabled={testingMcp}
+                    className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[10px] font-sans font-semibold cursor-pointer"
+                  >
+                    {testingMcp ? "Calling Local MCP..." : "Ping Local MCP Server (JSON-RPC)"}
+                  </button>
+                </div>
+                <div className="truncate">
+                  <span className="text-emerald-400">MEDIUM_MCP_SERVER_URL</span>=
+                  <span className="text-amber-200">
+                    "{data.medium_mcp_config?.server_url || "http://127.0.0.1:3000/api/mcp/medium"}"
+                  </span>
+                </div>
+                <div className="truncate">
+                  <span className="text-emerald-400">MEDIUM_MCP_SERVER_CMD</span>=
+                  <span className="text-amber-200">
+                    "{data.medium_mcp_config?.server_cmd || "python3 -m target_prefetch.medium_mcp_server --stdio"}"
+                  </span>
+                </div>
+              </div>
+
+              {mcpRpcResult && (
+                <pre className="p-2.5 bg-slate-900 text-emerald-300 rounded-lg font-mono text-[10px] overflow-x-auto max-h-40 leading-relaxed">
+                  {JSON.stringify(mcpRpcResult, null, 2)}
+                </pre>
+              )}
+
               <div className="space-y-2 pt-1">
                 {data.medium_mcp_config?.tools.map((t) => (
                   <div

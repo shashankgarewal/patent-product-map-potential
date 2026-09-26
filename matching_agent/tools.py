@@ -19,7 +19,12 @@ import sqlite3
 from typing import Dict, Any, List, Optional, Tuple
 
 from target_prefetch.db import get_db_connection
-from target_prefetch.pipeline import DB_PATH, initialize_database, run_prefetch_pipeline
+from target_prefetch.pipeline import (
+    DB_PATH,
+    initialize_database,
+    run_prefetch_pipeline,
+    generate_chunk_embedding,
+)
 
 
 STOPWORDS = {
@@ -32,6 +37,14 @@ STOPWORDS = {
 
 # Synonym / technical domain expansion groups so related engineering terms match accurately
 TECHNICAL_SYNONYM_GROUPS: List[List[str]] = [
+    ["recommendation", "recommender", "personalized video ranker", "pvr", "top-n", "ranking", "ranker", "personalization", "personalized"],
+    ["two-dimensional", "2d", "homepage", "canvas", "row", "page generation", "stage-wise", "submodular", "diversity", "deduplication"],
+    ["contextual", "bandit", "bandits", "multi-armed", "linucb", "thompson sampling", "inverse propensity", "ipw", "propensity", "counterfactual"],
+    ["artwork", "ava", "visual aesthetics", "thumbnail", "frame composition", "facial prominence", "actor", "visual"],
+    ["session", "in-session", "sequential", "autoregressive", "transformer", "self-attention", "short-term", "intent", "feature store", "axion", "evcache"],
+    ["two-tower", "dual-encoder", "approximate nearest neighbor", "ann", "scann", "hnsw", "embedding", "embeddings", "collaborative filtering"],
+    ["bipartite", "graph", "graphsage", "cold-start", "message passing", "cross-encoder", "bi-encoder", "semantic search"],
+    ["calibrated", "calibration", "kullback-leibler", "kl-divergence", "genre", "multi-objective", "pareto", "interleaving"],
     ["adaptive bitrate", "abr", "bitrate", "representation", "manifest", "profile", "ladder", "switching"],
     ["convex hull", "rate-distortion", "per-title", "per-shot", "shot-based", "dynamic optimizer", "vmaf", "perceptual"],
     ["quantization", "qp", "dqp", "crf", "coding tree unit", "ctu", "superblock", "hevc", "av1", "h.264", "codec", "encoding", "encoder"],
@@ -113,15 +126,16 @@ NETFLIX_PRODUCT_COMMERCIAL_PROFILES: List[Dict[str, Any]] = [
         "pricing_tier_linkage": "Headline feature differentiator for Premium ($22.99/mo US) Spatial Audio + 4K UHD tier",
     },
     {
-        "match_keywords": ["recommender", "personalization", "search", "experimentation", "ranker"],
-        "strategic_role": "Core Member Discovery, Personalization & Retention Platform",
-        "commercial_tier_weight": 84,
+        "match_keywords": ["recommender", "personalization", "personalized", "search", "experimentation", "ranker", "pvr", "top-n", "bandit", "artwork", "ava", "foundation model", "hydra", "two-tower", "graphsage", "axion"],
+        "strategic_role": "Core Member Discovery, Personalization & Retention Platform (Drives >80% of Hours Streamed)",
+        "commercial_tier_weight": 91,
         "monetization_driver": (
-            "Subscriber Retention & Engagement Driver: Drives personalized homepage row generation and search "
-            "across >250M–301M subscribers, materially reducing member churn and maximizing catalog utilization."
+            "Subscriber Retention & Engagement Driver: Drives >80% of hours streamed across >301.6M paid memberships "
+            "($39.0B FY2024 consolidated streaming revenue per Form 10-K) via Personalized Video Ranker (PVR), Top-N, "
+            "2D Page Generation, and Contextual Bandit Artwork personalization, materially reducing member churn."
         ),
-        "adoption_metric": "Serves personalized rankings and search across 100% of global subscriber profiles",
-        "pricing_tier_linkage": "Supports subscriber retention and ad-impression engagement across all subscription tiers",
+        "adoption_metric": "Serves personalized homepage rankings, artwork, and search across 100% of global subscriber profiles (>301.6M paid memberships)",
+        "pricing_tier_linkage": "Directly drives subscriber retention and ad-impression engagement across Standard with Ads ($6.99/mo), Standard ($15.49/mo), and Premium ($22.99/mo) tiers",
     },
     {
         "match_keywords": ["keystone", "kafka", "flink", "telemetry", "data infrastructure"],
@@ -152,7 +166,7 @@ def retrieve_commercial_intelligence_tool(
     cur = conn.cursor()
 
     cur.execute("SELECT COUNT(*) AS cnt FROM documents")
-    if int(cur.fetchone()["cnt"]) < 50:
+    if int(cur.fetchone()["cnt"]) == 0:
         conn.close()
         run_prefetch_pipeline(mode="initial")
         conn = get_db_connection(DB_PATH)
@@ -181,9 +195,12 @@ def retrieve_commercial_intelligence_tool(
           AND (
               LOWER(c.content) LIKE '%million%'
               OR LOWER(c.content) LIKE '%100% of%'
+              OR LOWER(c.content) LIKE '%80%%'
               OR LOWER(c.content) LIKE '%revenue%'
               OR LOWER(c.content) LIKE '%subscribers%'
-              OR d.source_type IN ('open_connect_documentation', 'technical_paper')
+              OR LOWER(c.content) LIKE '%recommend%'
+              OR LOWER(c.content) LIKE '%personaliz%'
+              OR d.source_type IN ('open_connect_documentation', 'technical_paper', 'netflix_tech_blog')
           )
         ORDER BY d.published_date DESC
         LIMIT 4
@@ -307,6 +324,7 @@ def evaluate_claim_element_alignment_tool(
                 "element_id": el.get("element_id", "1A"),
                 "description": el.get("description", ""),
                 "technical_concept": el.get("technical_concept", ""),
+                "embedding": el.get("embedding"),
             })
 
     has_source_claims = len(independent_claims) > 0 and len(all_elements) > 0
@@ -318,19 +336,24 @@ def evaluate_claim_element_alignment_tool(
         token_ratio = len(set(shared_tokens)) / max(1, len(set(el_tokens)))
 
         syn_bonus, shared_mechs = _compute_concept_expansion_bonus(el_text, target_corpus_text)
+        el_emb = el.get("embedding") or generate_chunk_embedding(el_text, task_type="RETRIEVAL_QUERY")
 
-        # Find best matching verbatim evidence chunk and capability
+        # Find best matching verbatim evidence chunk and capability (combining lexical + 768-d text-embedding-004 cosine similarity)
         best_ev = None
         best_ev_score = -1.0
+        best_ev_vec_sim = 0.0
         for ev in target_evidence:
             ev_text = ev.get("text", "")
             ev_tokens = set(_extract_technical_tokens(ev_text))
             ev_shared = len([t for t in set(el_tokens) if t in ev_tokens])
             ev_syn, _ = _compute_concept_expansion_bonus(el_text, ev_text)
-            score = ev_shared * 1.5 + ev_syn * 4.0
+            ev_emb = generate_chunk_embedding(ev_text, task_type="RETRIEVAL_DOCUMENT")
+            vec_sim = sum(a * b for a, b in zip(el_emb, ev_emb)) if (el_emb and ev_emb) else 0.0
+            score = ev_shared * 1.5 + ev_syn * 4.0 + max(0.0, vec_sim) * 3.0
             if score > best_ev_score:
                 best_ev_score = score
                 best_ev = ev
+                best_ev_vec_sim = round(max(0.0, vec_sim), 3)
 
         best_cap = target_capabilities[0] if target_capabilities else target_tech
         best_cap_score = -1.0
@@ -343,7 +366,7 @@ def evaluate_claim_element_alignment_tool(
                 best_cap_score = c_score
                 best_cap = cap
 
-        combined_alignment_signal = token_ratio * 0.55 + syn_bonus * 0.65
+        combined_alignment_signal = token_ratio * 0.45 + syn_bonus * 0.55 + (best_ev_vec_sim * 0.25)
 
         if combined_alignment_signal >= 0.42 or (len(shared_mechs) >= 2 and len(set(shared_tokens)) >= 2):
             alignment_status = "EVIDENCE_IDENTIFIED"
@@ -378,6 +401,8 @@ def evaluate_claim_element_alignment_tool(
             "shared_technical_terms": list(dict.fromkeys(shared_mechs + shared_tokens))[:6],
             "supporting_source_title": best_ev.get("source_title") if best_ev else None,
             "supporting_source_url": best_ev.get("source_url") if best_ev else None,
+            "embedding_cosine_similarity": best_ev_vec_sim,
+            "embedding_model": "text-embedding-004",
             "alignment_rationale": alignment_note,
         })
 
@@ -446,7 +471,11 @@ def evaluate_claim_element_alignment_tool(
     # Factor D: CPC & Technology Domain Coherence (0 - 10 pts)
     cpc_pts = 0.0
     target_low = target_corpus_text.lower()
-    if any(c.startswith("H04N19") or c.startswith("H04N21/2343") for c in patent_cpcs) and (
+    if any(c.startswith("H04N21/466") or c.startswith("H04N21/482") or c.startswith("G06F16/7") or c.startswith("G06N3") for c in patent_cpcs) and (
+        "recommend" in target_low or "ranker" in target_low or "pvr" in target_low or "bandit" in target_low or "artwork" in target_low or "two-tower" in target_low or "session" in target_low
+    ):
+        cpc_pts = 9.5
+    elif any(c.startswith("H04N19") or c.startswith("H04N21/2343") for c in patent_cpcs) and (
         "encoding" in target_low or "optimizer" in target_low or "shot" in target_low or "vmaf" in target_low
     ):
         cpc_pts = 9.5

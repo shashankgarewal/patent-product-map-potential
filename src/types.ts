@@ -48,6 +48,15 @@ export interface PatentRecord {
   status_fact_basis?: string;
   estimated_remaining_term_years: number | null;
   patent_life?: PatentLifeEstimate;
+  patent_embedding_metadata?: {
+    patent_number: string;
+    model: string;
+    dimensions: number;
+    task_type: string;
+    embedded_fields: string[];
+    claim_elements_embedded_count: number;
+    vector_preview: number[];
+  };
   cpc_codes: string[];
   assignees?: string[];
   assignee_harmonized?: string[];
@@ -95,9 +104,11 @@ export interface PipelineResponse {
     | "INVALID_INPUT"
     | "PIPELINE_ERROR";
   client_company: string;
+  target_company?: string;
   resolved_assignee?: string;
   technology_area: string;
   error?: string;
+  matching_analysis?: MatchingAgentResponse;
   resolution?: {
     status: string;
     query?: string;
@@ -126,6 +137,15 @@ export interface PipelineResponse {
     stage2_filtered_out_records: number;
     stage2_shortlisted_candidates: number;
     stage3_full_claims_fetched: number;
+    embedding_model?: string;
+    embedding_dimensions?: number;
+    dynamic_bigquery_vector_search?: {
+      triggered: boolean;
+      embedding_model: string;
+      dimensions: number;
+      fetched_count: number;
+      fetched_publications: string[];
+    };
     stage1_sql?: string;
     stage2_sql?: string;
     stage3_sql?: string;
@@ -168,6 +188,8 @@ export interface TargetKnowledgeChunk {
   technology_area: string | null;
   chunk_id: string;
   embedding: number[];
+  embedding_model?: string;
+  embedding_dimensions?: number;
   candidate_tags?: string[];
   chunk_index?: number;
   content_hash?: string;
@@ -240,16 +262,34 @@ export interface TargetKnowledgeResponse {
   alloydb_config?: {
     engine: string;
     vector_extension: string;
+    embedding_model?: string;
+    embedding_dimensions?: number;
+    chunk_size_words?: number;
+    chunk_overlap_words?: number;
+    configured_document_count?: number;
+    configured_focus_area?: string;
     instance_uri: string;
     database_name: string;
     connection_uri_display: string;
     connection_mode: string;
     ddl_preview: string;
   };
+  prefetch_config?: {
+    prefetch_document_count: number;
+    prefetch_focus_area: string;
+    embedding_model: string;
+    embedding_dimensions: number;
+    chunk_size_words: number;
+    chunk_overlap_words: number;
+    chunking_rationale: string;
+  };
   medium_mcp_config?: {
     server_id: string;
     server_name: string;
     registry_url: string;
+    server_url?: string;
+    server_cmd?: string;
+    transport_status?: string;
     protocol_version: string;
     handled_domains: string[];
     direct_url_scraping_disabled: boolean;
@@ -351,6 +391,8 @@ export interface ClaimElementAlignment {
   shared_technical_terms: string[];
   supporting_source_title: string | null;
   supporting_source_url: string | null;
+  embedding_cosine_similarity?: number;
+  embedding_model?: string;
   alignment_rationale: string;
 }
 

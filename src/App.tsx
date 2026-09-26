@@ -23,15 +23,15 @@ import {
   Clock,
   CheckCircle2,
   BookOpen,
+  Scale,
+  TrendingUp,
 } from "lucide-react";
-import { PipelineResponse, PatentRecord } from "./types";
+import { PipelineResponse, PatentRecord, RankedPatentProductMatch } from "./types";
 import TargetPrefetchView from "./TargetPrefetchView";
 import TargetAgentView from "./TargetAgentView";
-import MatchingAgentView from "./MatchingAgentView";
 
 type WorkspaceView =
   | "dossier"
-  | "matching"
   | "claims"
   | "clusters"
   | "target_agent"
@@ -39,16 +39,25 @@ type WorkspaceView =
   | "schema"
   | "json";
 
+export interface UnifiedCandidateMatchRow {
+  patent: PatentRecord;
+  match: RankedPatentProductMatch | null;
+}
+
 export default function App() {
   const [clientCompany, setClientCompany] = useState<string>("Apple");
   const [targetCompanyPreview, setTargetCompanyPreview] = useState<string>("Netflix, Inc.");
-  const [technologyArea, setTechnologyArea] = useState<string>("video streaming");
+  const [technologyArea, setTechnologyArea] = useState<string>("content recommendation");
+  const [maxCandidates, setMaxCandidates] = useState<number>(10);
+  const [maxCandidatesInput, setMaxCandidatesInput] = useState<string>("10");
   const [inputMode, setInputMode] = useState<"form" | "json">("form");
   const [rawJsonInput, setRawJsonInput] = useState<string>(
     JSON.stringify(
       {
         client_company: "Apple",
-        technology_area: "video streaming",
+        target_company: "Netflix",
+        technology_area: "content recommendation",
+        max_candidates: 10,
       },
       null,
       2
@@ -62,28 +71,56 @@ export default function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>("dossier");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [clusterFilter, setClusterFilter] = useState<string>("ALL");
-  const [sortBy, setSortBy] = useState<"relevance_desc" | "term_desc" | "filing_desc">("relevance_desc");
+  const [priorityFilter, setPriorityFilter] = useState<string>("ALL");
+  const [sortBy, setSortBy] = useState<
+    "priority_desc" | "technical_desc" | "commercial_desc" | "relevance_desc" | "term_desc" | "filing_desc"
+  >("priority_desc");
   const [copiedTable, setCopiedTable] = useState<boolean>(false);
   const [copiedJson, setCopiedJson] = useState<boolean>(false);
   const [completedTimestamp, setCompletedTimestamp] = useState<string>("07:24:12 UTC");
 
-  const executePipeline = async (companyOverride?: string, techOverride?: string) => {
+  const executePipeline = async (
+    companyOverride?: string,
+    techOverride?: string,
+    maxCandidatesOverride?: number
+  ) => {
     setJsonError(null);
     let companyToRun = companyOverride !== undefined ? companyOverride : clientCompany;
+    let targetToRun = targetCompanyPreview.replace(/,\s*Inc\.?$/i, "").trim() || "Netflix";
     let techToRun = techOverride !== undefined ? techOverride : technologyArea;
+    const parsedInputCount = parseInt(maxCandidatesInput, 10);
+    let countToRun =
+      maxCandidatesOverride !== undefined
+        ? maxCandidatesOverride
+        : !Number.isNaN(parsedInputCount)
+        ? Math.max(1, Math.min(100, parsedInputCount))
+        : maxCandidates;
+    setMaxCandidates(countToRun);
+    setMaxCandidatesInput(String(countToRun));
 
     if (companyOverride === undefined && inputMode === "json") {
       try {
         const parsed = JSON.parse(rawJsonInput);
         companyToRun = String(parsed.client_company || "").trim();
+        if (parsed.target_company) {
+          targetToRun = String(parsed.target_company).trim();
+          setTargetCompanyPreview(targetToRun);
+        }
         techToRun =
           parsed.technology_area && parsed.technology_area !== "optional"
             ? String(parsed.technology_area).trim()
             : "";
+        if (parsed.max_candidates !== undefined) {
+          countToRun = Math.max(1, Math.min(100, Number(parsed.max_candidates) || 10));
+          setMaxCandidates(countToRun);
+          setMaxCandidatesInput(String(countToRun));
+        }
         setClientCompany(companyToRun);
         setTechnologyArea(techToRun);
       } catch (_err) {
-        setJsonError('Invalid JSON payload. Expected {"client_company": "...", "technology_area": "..."}');
+        setJsonError(
+          'Invalid JSON payload. Expected {"client_company": "...", "target_company": "...", "technology_area": "...", "max_candidates": 6}'
+        );
         return;
       }
     } else {
@@ -91,7 +128,9 @@ export default function App() {
         JSON.stringify(
           {
             client_company: companyToRun,
+            target_company: targetToRun,
             technology_area: techToRun || "optional",
+            max_candidates: countToRun,
           },
           null,
           2
@@ -101,14 +140,16 @@ export default function App() {
 
     setLoading(true);
     setClusterFilter("ALL");
+    setPriorityFilter("ALL");
     try {
       const res = await fetch("/api/analyze-client-patents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_company: companyToRun,
+          target_company: targetToRun,
           technology_area: techToRun,
-          max_candidates: 6,
+          max_candidates: countToRun,
           use_llm: true,
         }),
       });
@@ -121,7 +162,10 @@ export default function App() {
           "0"
         )}:${String(now.getUTCSeconds()).padStart(2, "0")} UTC`
       );
-      if (data.patents && data.patents.length > 0) {
+      const firstMatchPatent = data.matching_analysis?.ranked_matches?.[0]?.patent_number;
+      if (firstMatchPatent) {
+        setSelectedPatentNumber(firstMatchPatent);
+      } else if (data.patents && data.patents.length > 0) {
         setSelectedPatentNumber(data.patents[0].patent_number);
       } else {
         setSelectedPatentNumber(null);
@@ -130,8 +174,9 @@ export default function App() {
       setPipelineData({
         pipeline_status: "PIPELINE_ERROR",
         client_company: companyToRun,
+        target_company: targetToRun,
         technology_area: techToRun,
-        error: e?.message || "Failed to execute ADK Client Patent Pipeline.",
+        error: e?.message || "Failed to execute ADK Client Patent & Target Matching Pipeline.",
         patents: [],
       });
     } finally {
@@ -139,50 +184,91 @@ export default function App() {
     }
   };
 
-  const filteredPatents = useMemo(() => {
+  const matchByPatentNumber = useMemo(() => {
+    const map: Record<string, RankedPatentProductMatch> = {};
+    for (const m of pipelineData?.matching_analysis?.ranked_matches || []) {
+      map[m.patent_number] = m;
+    }
+    return map;
+  }, [pipelineData]);
+
+  const unifiedRows: UnifiedCandidateMatchRow[] = useMemo(() => {
     if (!pipelineData?.patents) return [];
-    let list = [...pipelineData.patents];
+    let rows: UnifiedCandidateMatchRow[] = pipelineData.patents.map((p) => ({
+      patent: p,
+      match: matchByPatentNumber[p.patent_number] || null,
+    }));
 
     if (clusterFilter !== "ALL") {
-      list = list.filter((p) => (p.technology_areas || []).includes(clusterFilter));
+      rows = rows.filter((r) => (r.patent.technology_areas || []).includes(clusterFilter));
+    }
+
+    if (priorityFilter !== "ALL") {
+      rows = rows.filter((r) => r.match?.investigation_priority?.priority_tier === priorityFilter);
     }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (p) =>
+      rows = rows.filter(({ patent: p, match: m }) => {
+        const patHit =
           p.patent_number.toLowerCase().includes(q) ||
           p.title.toLowerCase().includes(q) ||
           p.technical_summary.toLowerCase().includes(q) ||
           (p.cpc_codes || []).some((c) => c.toLowerCase().includes(q)) ||
           (p.key_concepts || []).some((k) => k.toLowerCase().includes(q)) ||
-          (p.independent_claims || []).some((cl) => cl.toLowerCase().includes(q))
-      );
+          (p.independent_claims || []).some((cl) => cl.toLowerCase().includes(q));
+        const matchHit =
+          m &&
+          (m.target_product_or_service.toLowerCase().includes(q) ||
+            m.target_technology.toLowerCase().includes(q) ||
+            m.technical_overlap.summary.toLowerCase().includes(q) ||
+            m.potential_monetary_opportunity.rationale.toLowerCase().includes(q));
+        return Boolean(patHit || matchHit);
+      });
     }
 
-    list.sort((a, b) => {
+    rows.sort((a, b) => {
+      if (sortBy === "priority_desc") {
+        const pA = a.match?.investigation_priority?.priority_score ?? a.patent.investigation_relevance?.score ?? 0;
+        const pB = b.match?.investigation_priority?.priority_score ?? b.patent.investigation_relevance?.score ?? 0;
+        return pB - pA;
+      }
+      if (sortBy === "technical_desc") {
+        const tA = a.match?.technical_overlap?.technical_relevance_score ?? a.patent.investigation_relevance?.score ?? 0;
+        const tB = b.match?.technical_overlap?.technical_relevance_score ?? b.patent.investigation_relevance?.score ?? 0;
+        return tB - tA;
+      }
+      if (sortBy === "commercial_desc") {
+        const cA = a.match?.potential_monetary_opportunity?.commercial_opportunity_score ?? 0;
+        const cB = b.match?.potential_monetary_opportunity?.commercial_opportunity_score ?? 0;
+        return cB - cA;
+      }
       if (sortBy === "relevance_desc") {
-        return (b.investigation_relevance?.score ?? 0) - (a.investigation_relevance?.score ?? 0);
+        return (b.patent.investigation_relevance?.score ?? 0) - (a.patent.investigation_relevance?.score ?? 0);
       }
       if (sortBy === "term_desc") {
-        return (b.estimated_remaining_term_years ?? -1) - (a.estimated_remaining_term_years ?? -1);
+        return (b.patent.estimated_remaining_term_years ?? -1) - (a.patent.estimated_remaining_term_years ?? -1);
       }
       if (sortBy === "filing_desc") {
-        return (b.filing_date || "").localeCompare(a.filing_date || "");
+        return (b.patent.filing_date || "").localeCompare(a.patent.filing_date || "");
       }
       return 0;
     });
 
-    return list;
-  }, [pipelineData, clusterFilter, searchQuery, sortBy]);
+    return rows;
+  }, [pipelineData, matchByPatentNumber, clusterFilter, priorityFilter, searchQuery, sortBy]);
 
-  const selectedPatent: PatentRecord | null = useMemo(() => {
-    if (!filteredPatents.length) return null;
+  const filteredPatents = useMemo(() => unifiedRows.map((r) => r.patent), [unifiedRows]);
+
+  const selectedRow: UnifiedCandidateMatchRow | null = useMemo(() => {
+    if (!unifiedRows.length) return null;
     return (
-      filteredPatents.find((p) => p.patent_number === selectedPatentNumber) ||
-      filteredPatents[0]
+      unifiedRows.find((r) => r.patent.patent_number === selectedPatentNumber) || unifiedRows[0]
     );
-  }, [filteredPatents, selectedPatentNumber]);
+  }, [unifiedRows, selectedPatentNumber]);
+
+  const selectedPatent: PatentRecord | null = selectedRow?.patent || null;
+  const selectedMatch: RankedPatentProductMatch | null = selectedRow?.match || null;
 
   const averageRemainingTerm = useMemo(() => {
     if (!pipelineData?.patents?.length) return null;
@@ -195,33 +281,50 @@ export default function App() {
   }, [pipelineData]);
 
   const highPriorityCount = useMemo(() => {
+    if (pipelineData?.matching_analysis?.summary_metrics?.high_priority_count !== undefined) {
+      return pipelineData.matching_analysis.summary_metrics.high_priority_count;
+    }
     if (!pipelineData?.patents) return 0;
     return pipelineData.patents.filter((p) => (p.investigation_relevance?.score ?? 0) >= 80).length;
   }, [pipelineData]);
 
   const handleCopyTable = () => {
-    if (!filteredPatents.length) return;
+    if (!unifiedRows.length) return;
     const headers = [
       "Rank",
       "Patent Number",
-      "Title",
-      "Technology Areas",
-      "Status",
-      "Filing Date",
-      "Grant Date",
+      "Title & Technical Summary",
+      "Technology Cluster",
+      "Target Product / Technology",
+      "Technical Overlap (Part 1)",
+      "Supporting Target Evidence",
+      "Patent Status",
       "Est. Remaining Term (Yrs)",
-      "Investigation Relevance Score",
+      "Potential Monetary Opportunity (Part 2)",
+      "Investigation Priority (Part 3)",
     ];
-    const rows = filteredPatents.map((p, i) => [
+    const rows = unifiedRows.map(({ patent: p, match: m }, i) => [
       i + 1,
       p.patent_number,
-      p.title,
+      `${p.title} — ${p.technical_summary}`,
       (p.technology_areas || []).join("; "),
+      m ? `${m.target_product_or_service} (${m.target_technology})` : "Target Evidence Pending",
+      m
+        ? `${m.technical_overlap.overlap_level} (${m.technical_overlap.technical_relevance_score}/100): ${m.technical_overlap.summary}`
+        : `Portfolio Relevance ${p.investigation_relevance?.score ?? 0}/100`,
+      m
+        ? (m.supporting_evidence || [])
+            .map((e) => `${e.source_title} (${e.source_url})`)
+            .join(" | ")
+        : p.source,
       p.status,
-      p.filing_date || "Missing",
-      p.grant_date || "Ungranted",
       p.estimated_remaining_term_years === null ? "N/A" : p.estimated_remaining_term_years,
-      `${p.investigation_relevance?.score ?? 0}/100`,
+      m
+        ? `${m.potential_monetary_opportunity.signal_tier} (${m.potential_monetary_opportunity.commercial_opportunity_score}/100)`
+        : "N/A",
+      m
+        ? `${m.investigation_priority.priority_tier} (${m.investigation_priority.priority_score}/100)`
+        : `${p.investigation_relevance?.score ?? 0}/100`,
     ]);
     const tsv = [headers.join("\t"), ...rows.map((r) => r.join("\t"))].join("\n");
     navigator.clipboard.writeText(tsv);
@@ -230,37 +333,59 @@ export default function App() {
   };
 
   const handleExportCsv = () => {
-    if (!filteredPatents.length) return;
+    if (!unifiedRows.length) return;
     const escapeCsv = (val: any) => `"${String(val ?? "").replace(/"/g, '""')}"`;
     const headers = [
+      "Rank",
       "Patent Number",
       "Title",
       "Technical Summary",
       "Technology Areas",
       "Key Concepts",
+      "Target Product or Service",
+      "Target Technology",
+      "Technical Overlap Level",
+      "Part 1 Technical Score",
+      "Technical Overlap Summary",
+      "Supporting Target Evidence",
       "Priority Date",
       "Filing Date",
       "Grant Date",
-      "Status",
+      "Patent Status",
       "Est Remaining Term Years",
+      "Part 2 Commercial Opportunity Signal",
+      "Part 2 Commercial Score",
+      "Part 3 Investigation Priority Tier",
+      "Part 3 Investigation Priority Score",
       "CPC Codes",
-      "Investigation Relevance Score",
-      "Source",
+      "Portfolio Relevance Score",
     ];
-    const rows = filteredPatents.map((p) => [
+    const rows = unifiedRows.map(({ patent: p, match: m }, idx) => [
+      idx + 1,
       p.patent_number,
       p.title,
       p.technical_summary,
       (p.technology_areas || []).join(" | "),
       (p.key_concepts || []).join(" | "),
+      m?.target_product_or_service || "",
+      m?.target_technology || "",
+      m?.technical_overlap?.overlap_level || "",
+      m?.technical_overlap?.technical_relevance_score ?? "",
+      m?.technical_overlap?.summary || "",
+      (m?.supporting_evidence || [])
+        .map((e) => `${e.source_title} [${e.source_url}]: ${e.text}`)
+        .join(" || "),
       p.priority_date || "",
       p.filing_date || "",
       p.grant_date || "",
       p.status,
       p.estimated_remaining_term_years ?? "",
+      m?.potential_monetary_opportunity?.signal_tier || "",
+      m?.potential_monetary_opportunity?.commercial_opportunity_score ?? "",
+      m?.investigation_priority?.priority_tier || "",
+      m?.investigation_priority?.priority_score ?? "",
       (p.cpc_codes || []).join(" | "),
       p.investigation_relevance?.score ?? 0,
-      p.source,
     ]);
     const csvContent = [
       headers.map(escapeCsv).join(","),
@@ -270,7 +395,9 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `client_patent_candidates_${(pipelineData?.client_company || "export")
+    a.download = `patent_product_intelligence_${(pipelineData?.client_company || "client")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")}_vs_${(pipelineData?.target_company || "target")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")}.csv`;
     a.click();
@@ -436,12 +563,75 @@ export default function App() {
                         type="text"
                         value={technologyArea}
                         onChange={(e) => setTechnologyArea(e.target.value)}
-                        placeholder="e.g. video streaming, adaptive streaming, video encoding"
+                        placeholder="e.g. content recommendation, video streaming, video encoding"
                         className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 text-slate-900"
                       />
                     </div>
                     <p className="text-[11px] text-slate-500 leading-normal">
-                      Optionally narrow the analysis to a specific technology area. Leave blank to analyze the client company&apos;s broader patent portfolio.
+                      Optionally narrow the analysis to a specific technology area (e.g.{" "}
+                      <span className="font-mono text-slate-700">content recommendation</span>).
+                    </p>
+                  </div>
+
+                  {/* Field 4: Number of Patents in Result */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <label htmlFor="max-candidates" className="font-semibold text-slate-800">
+                        Number of Patents in Result
+                      </label>
+                      <span className="text-[11px] font-mono text-blue-700 font-semibold">
+                        max_candidates: {maxCandidates} (1–100)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-24 shrink-0">
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          id="max-candidates"
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={maxCandidatesInput}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setMaxCandidatesInput(raw);
+                            const val = parseInt(raw, 10);
+                            if (!Number.isNaN(val)) {
+                              const clamped = Math.max(1, Math.min(100, val));
+                              setMaxCandidates(clamped);
+                            }
+                          }}
+                          onBlur={() => {
+                            const val = parseInt(maxCandidatesInput, 10);
+                            const clamped = Number.isNaN(val) ? 10 : Math.max(1, Math.min(100, val));
+                            setMaxCandidates(clamped);
+                            setMaxCandidatesInput(String(clamped));
+                          }}
+                          className="w-full pl-8 pr-2 py-1.5 text-xs font-mono font-semibold bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-900 text-slate-900"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1 flex-1">
+                        {[6, 15, 25, 50, 100].map((num) => (
+                          <button
+                            key={num}
+                            type="button"
+                            onClick={() => {
+                              setMaxCandidates(num);
+                              setMaxCandidatesInput(String(num));
+                            }}
+                            className={`flex-1 py-1.5 rounded-lg text-[11px] font-mono font-semibold border transition-colors cursor-pointer ${
+                              maxCandidates === num
+                                ? "bg-slate-900 text-white border-slate-900"
+                                : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+                            }`}
+                          >
+                            {num}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-normal">
+                      Supports 1 to 100 patents. If the local mirror has fewer matches, BigQuery Vector Search (<span className="font-mono">text-embedding-004</span>) dynamically fetches &amp; embeds additional patents.
                     </p>
                   </div>
 
@@ -599,22 +789,11 @@ export default function App() {
                 onClick={() => setActiveView("dossier")}
                 className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
                   activeView === "dossier"
-                    ? "bg-white text-slate-900 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Candidate Matrix
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveView("matching")}
-                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
-                  activeView === "matching"
                     ? "bg-blue-700 text-white shadow-2xs"
-                    : "text-blue-800 hover:bg-blue-50"
+                    : "text-slate-700 hover:text-slate-900"
                 }`}
               >
-                Patent–Target Matching (ADK)
+                Candidate Matrix &amp; Target Matching
               </button>
               <button
                 type="button"
@@ -669,7 +848,7 @@ export default function App() {
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                ADK & Schema
+                ADK &amp; Schema
               </button>
               <button
                 type="button"
@@ -690,15 +869,6 @@ export default function App() {
         <main className="p-6 space-y-5 max-w-[1320px] w-full mx-auto">
           {activeView === "target_prefetch" ? (
             <TargetPrefetchView />
-          ) : activeView === "matching" ? (
-            <MatchingAgentView
-              clientCompanyDefault={pipelineData?.client_company || clientCompany}
-              targetCompanyDefault={
-                targetCompanyPreview.includes("Netflix") ? "Netflix" : targetCompanyPreview
-              }
-              technologyAreaDefault={technologyArea}
-              clientPatents={pipelineData?.patents || []}
-            />
           ) : activeView === "target_agent" ? (
             <TargetAgentView
               targetCompanyDefault={
@@ -789,7 +959,7 @@ export default function App() {
                       AlloyDB ScaNN + Medium MCP
                     </div>
                     <p className="text-[11px] text-slate-600 leading-normal">
-                      Zero runtime web crawling. Pre-fetches 62 Netflix docs (45 via Medium MCP Server) into AlloyDB `vector(32)` tables.
+                      Pre-fetches configurable <span className="font-mono">PREFETCH_DOCUMENT_COUNT=10</span> Netflix Recommendation docs into AlloyDB with <span className="font-mono">text-embedding-004</span> (<span className="font-mono">vector(768)</span>) &amp; 180w/35w chunks; dynamically fetches &amp; embeds on cache miss.
                     </p>
                   </div>
 
@@ -914,16 +1084,16 @@ export default function App() {
                           2. AlloyDB 2-Tier Parent-Child Schema
                         </div>
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Stores 62 full untruncated articles in <span className="font-mono">documents</span> (with SHA-256 <span className="font-mono">content_hash</span> deduplication) and 130 overlapping chunks in <span className="font-mono">document_chunks</span> with <span className="font-mono">vector(32)</span> ScaNN embeddings.
+                          Stores <span className="font-mono">PREFETCH_DOCUMENT_COUNT=10</span> recommendation articles in <span className="font-mono">documents</span> and 180w/35w overlapping chunks in <span className="font-mono">document_chunks</span> with <span className="font-mono">text-embedding-004</span> (<span className="font-mono">vector(768)</span>) ScaNN embeddings.
                         </p>
                       </div>
 
                       <div className="p-3 rounded-lg bg-slate-50 border border-slate-200/80 space-y-1">
                         <div className="font-mono font-bold text-slate-900">
-                          3. Runtime Target Retrieval Agent (ADK)
+                          3. Dynamic Vector Search &amp; On-Demand Embedding
                         </div>
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Expands client patent concepts into multi-query hybrid vector + keyword lookups against AlloyDB (<span className="font-mono">search_target_knowledge</span>) without browsing the internet.
+                          When mirror patents or prefetched AlloyDB docs have no match, dynamically queries BigQuery <span className="font-mono">VECTOR_SEARCH</span> and fetches/embeds Netflix docs with <span className="font-mono">text-embedding-004</span>.
                         </p>
                       </div>
                     </div>
@@ -1104,7 +1274,7 @@ export default function App() {
           ) : (
             <>
           {/* =================================================================
-              EXECUTIVE DOSSIER HEADER CARD (Matches Reference Image 2)
+              EXECUTIVE DOSSIER HEADER CARD (Unified Portfolio + Target Matching)
              ================================================================= */}
           <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-5 shadow-2xs">
             <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
@@ -1112,31 +1282,40 @@ export default function App() {
                 <div className="flex items-center gap-2.5 text-xs">
                   <span className="inline-flex items-center gap-1.5 font-mono font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                    CLIENT PATENT DOSSIER #ADK-2026
+                    PATENT–PRODUCT INTELLIGENCE DOSSIER #ADK-2026
                   </span>
                   <span className="text-slate-400">·</span>
                   <span className="font-mono text-slate-500">Completed {completedTimestamp}</span>
                 </div>
 
                 <h2 className="text-2xl font-bold tracking-tight text-slate-900">
-                  Client Patent Intelligence: {pipelineData?.client_company || clientCompany}
-                  {pipelineData?.technology_area ? ` (${pipelineData.technology_area})` : ""}
+                  {pipelineData?.client_company || clientCompany} ↔{" "}
+                  {pipelineData?.target_company ||
+                    targetCompanyPreview.replace(/,\s*Inc\.?$/i, "").trim() ||
+                    "Netflix"}
+                  {pipelineData?.technology_area ? ` · ${pipelineData.technology_area}` : ""}
                 </h2>
 
-                <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+                <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
                   {pipelineData?.pipeline_status === "SUCCESS" ? (
                     <>
-                      Staged ADK analysis complete.{" "}
+                      Unified Google ADK Candidate Matrix &amp; Patent–Target Matching analysis complete.{" "}
                       <strong className="font-semibold text-slate-900">
                         {pipelineData.patents.length} candidate patent publications
                       </strong>{" "}
-                      retrieved and decomposed across{" "}
+                      retrieved from{" "}
+                      <span className="font-mono">patents-public-data.patents.publications</span>{" "}
+                      (out of{" "}
                       <strong className="font-semibold text-slate-900">
                         {pipelineData.staged_retrieval_metrics?.stage2_total_portfolio_records ??
                           pipelineData.patents.length}{" "}
-                        screened portfolio utility filings
+                        screened utility filings
+                      </strong>
+                      ) and aligned against{" "}
+                      <strong className="font-semibold text-slate-900">
+                        {pipelineData?.target_company || "Netflix"}
                       </strong>{" "}
-                      in <span className="font-mono">patents-public-data.patents.publications</span>.
+                      pre-fetched AlloyDB target capabilities and SEC Form 10-K disclosures.
                     </>
                   ) : (
                     <>
@@ -1155,7 +1334,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleCopyTable}
-                  disabled={!filteredPatents.length}
+                  disabled={!unifiedRows.length}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors cursor-pointer"
                 >
                   {copiedTable ? (
@@ -1169,7 +1348,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleExportCsv}
-                  disabled={!filteredPatents.length}
+                  disabled={!unifiedRows.length}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-40 transition-colors cursor-pointer"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
@@ -1188,16 +1367,17 @@ export default function App() {
               </div>
             </div>
 
-            {/* 4-Column Metadata Strip (Matches Reference Image 2) */}
+            {/* 4-Column Metadata Strip */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
               <div className="border border-slate-200/90 rounded-lg p-3 flex items-center gap-3 bg-slate-50/40">
                 <Building2 className="w-4 h-4 text-blue-600 shrink-0" />
                 <div className="min-w-0">
                   <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-                    CLIENT (HARMONIZED ASSIGNEE)
+                    CLIENT ↔ TARGET ENTITIES
                   </div>
                   <div className="text-xs font-semibold text-slate-900 truncate font-mono">
-                    {pipelineData?.resolved_assignee || pipelineData?.client_company || "Unresolved"}
+                    {pipelineData?.resolved_assignee || pipelineData?.client_company || "Unresolved"} ↔{" "}
+                    {pipelineData?.target_company || "Netflix"}
                   </div>
                 </div>
               </div>
@@ -1221,7 +1401,7 @@ export default function App() {
                     ADK AGENT HIERARCHY
                   </div>
                   <div className="text-xs font-semibold text-slate-900 truncate font-mono">
-                    root → retrieval → analysis → ranking
+                    retrieval → analysis → matching → priority
                   </div>
                 </div>
               </div>
@@ -1230,10 +1410,13 @@ export default function App() {
                 <Database className="w-4 h-4 text-blue-600 shrink-0" />
                 <div className="min-w-0">
                   <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-                    VERIFICATION BASIS
+                    EMBEDDING &amp; VECTOR ENGINE
                   </div>
                   <div className="text-xs font-semibold text-slate-900 truncate font-mono">
-                    patents-public-data.patents
+                    text-embedding-004 (768-d) · {pipelineData?.patents?.length || 0} Patents
+                    {pipelineData?.staged_retrieval_metrics?.dynamic_bigquery_vector_search?.triggered
+                      ? ` (+${pipelineData.staged_retrieval_metrics.dynamic_bigquery_vector_search.fetched_count} BQ Vector)`
+                      : ""}
                   </div>
                 </div>
               </div>
@@ -1368,115 +1551,111 @@ export default function App() {
           )}
 
           {/* =================================================================
-              4 KPI SUMMARY CARDS (Matches Reference Image 2)
+              4 KPI SUMMARY CARDS (Unified Portfolio + Part 1 Technical + Part 2 Commercial)
              ================================================================= */}
           {!loading && pipelineData && pipelineData.pipeline_status === "SUCCESS" && (
             <>
               <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* KPI 1: Total Screened Portfolio Assets */}
-                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 shadow-2xs">
-                  <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                    <span>STAGE 2 SCREENED ASSETS</span>
-                    <Database className="w-3.5 h-3.5 text-slate-400" />
-                  </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-3xl font-bold font-mono tabular-nums text-slate-900">
-                      {pipelineData.staged_retrieval_metrics?.stage2_total_portfolio_records ??
-                        pipelineData.patents.length}
-                    </span>
-                    <span className="text-xs text-slate-500">publications</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-slate-600">
-                    <span className="w-2 h-2 rounded-full bg-blue-600"></span>
-                    <span>
-                      Shortlisted {pipelineData.patents.length} for Stage 3 claim extraction
-                    </span>
-                  </div>
-                </div>
-
-                {/* KPI 2: High Priority Investigation Candidates */}
-                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 shadow-2xs">
-                  <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                    <span>HIGH-RELEVANCE CANDIDATES</span>
+                {/* KPI 1: High-Priority Candidates */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                    <span>HIGH-PRIORITY CANDIDATES</span>
                     <ShieldCheck className="w-3.5 h-3.5 text-red-600" />
                   </div>
-                  <div className="flex items-baseline gap-1.5">
+                  <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-bold font-mono tabular-nums text-red-600">
                       {highPriorityCount}
                     </span>
-                    <span className="text-xs text-red-700 font-medium">
-                      candidates (score ≥ 80)
+                    <span className="text-xs text-slate-600">
+                      of {pipelineData.patents.length} returned ({Math.max(pipelineData.patents.length, pipelineData.staged_retrieval_metrics?.stage2_total_portfolio_records ?? pipelineData.patents.length)} portfolio filings screened)
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Out of {pipelineData.patents.length} analyzed portfolio records
+                    Active granted + strong technical evidence + core target scale
                   </div>
                 </div>
 
-                {/* KPI 3: Technology Clusters Identified */}
-                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 shadow-2xs">
-                  <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                    <span>TECHNOLOGY CLUSTERS</span>
+                {/* KPI 2: Part 1 Avg Technical Score */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                    <span>PART 1 · AVG TECHNICAL SCORE</span>
                     <Layers className="w-3.5 h-3.5 text-blue-600" />
                   </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-3xl font-bold font-mono tabular-nums text-blue-600">
-                      {pipelineData.technology_clusters?.length ?? 0}
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold font-mono tabular-nums text-blue-700">
+                      {pipelineData.matching_analysis?.summary_metrics?.avg_technical_relevance_score ?? 0}
                     </span>
-                    <span className="text-xs text-blue-700 font-medium">technical sub-areas</span>
+                    <span className="text-xs text-slate-500">/ 100 (Part 1 Separate)</span>
                   </div>
-                  <div className="text-[11px] text-slate-500 truncate">
-                    {(pipelineData.technology_clusters || [])
-                      .map((c) => c.sub_area)
-                      .join(" · ")}
+                  <div className="text-[11px] text-slate-500">
+                    Claim-element coverage + verbatim AlloyDB target evidence
                   </div>
                 </div>
 
-                {/* KPI 4: Avg. Estimated Remaining Term */}
-                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 shadow-2xs">
-                  <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-slate-400 uppercase">
-                    <span>AVG. EST. REMAINING LIFE</span>
-                    <Clock className="w-3.5 h-3.5 text-slate-400" />
+                {/* KPI 3: Part 2 Avg Commercial Score */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                    <span>PART 2 · AVG COMMERCIAL SCORE</span>
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
                   </div>
-                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-3xl font-bold font-mono tabular-nums text-slate-900">
-                      {averageRemainingTerm !== null ? averageRemainingTerm : "N/A"}
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-bold font-mono tabular-nums text-emerald-700">
+                      {pipelineData.matching_analysis?.summary_metrics?.avg_commercial_opportunity_score ?? 0}
                     </span>
-                    <span className="text-xs text-slate-500">years</span>
+                    <span className="text-xs text-slate-500">/ 100 (Part 2 Separate)</span>
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    20-yr statutory baseline (not legal opinion)
+                    SEC 10-K infrastructure criticality + ~{averageRemainingTerm ?? "N/A"} yr avg patent life
+                  </div>
+                </div>
+
+                {/* KPI 4: Revenue Non-Fabrication & Clusters */}
+                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-1.5 shadow-2xs">
+                  <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 uppercase">
+                    <span>COMMERCIAL &amp; CLUSTER BASIS</span>
+                    <Scale className="w-3.5 h-3.5 text-slate-600" />
+                  </div>
+                  <div className="text-sm font-bold text-slate-900 font-mono">
+                    SEC Form 10-K · {pipelineData.technology_clusters?.length ?? 0} Clusters
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-snug">
+                    Consolidated $33.7B–$39.0B reported; subsystem revenue explicitly marked undisclosed
                   </div>
                 </div>
               </section>
 
               {/* ===============================================================
-                  VIEW 1: CANDIDATE PATENT INTELLIGENCE MATRIX + INSPECTOR
+                  VIEW 1: UNIFIED CANDIDATE MATRIX & PATENT–TARGET MATCHING TABLE + ANALYSIS
                  =============================================================== */}
               {activeView === "dossier" && (
                 <div className="space-y-5">
-                  {/* Main Matrix Table Card */}
+                  {/* Unified Candidate Matrix & 9-Column Patent-Target Matching Table Card */}
                   <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
                     {/* Table Control Header */}
-                    <div className="px-5 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <h3 className="text-sm font-bold text-slate-900">
-                          Candidate Patent Intelligence Matrix
-                        </h3>
-                        <span className="text-[11px] font-mono font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                          {filteredPatents.length} Candidates Ranked
-                        </span>
+                    <div className="px-5 py-4 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2.5">
+                          <h3 className="text-sm font-bold text-slate-900">
+                            Unified Candidate Patent Matrix &amp; Patent–Target Matching Table
+                          </h3>
+                          <span className="text-[11px] font-mono font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
+                            {unifiedRows.length} Ranked Patent–Product Candidates
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Combines BigQuery Patent Source Facts, Claim Decomposition &amp; Technology Clusters with Target Product Discovery, Part 1 Technical Overlap, Part 2 Monetary Opportunity &amp; Part 3 Investigation Priority.
+                        </p>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-2.5 text-xs">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-bold text-slate-400 uppercase">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">
                             CLUSTER:
                           </span>
                           <select
                             value={clusterFilter}
                             onChange={(e) => setClusterFilter(e.target.value)}
-                            className="bg-white border border-slate-200 rounded-md px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none"
+                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-medium text-slate-800 focus:outline-none"
                           >
                             <option value="ALL">All Clusters ({pipelineData.patents.length})</option>
                             {(pipelineData.technology_clusters || []).map((c) => (
@@ -1488,16 +1667,44 @@ export default function App() {
                         </div>
 
                         <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-bold text-slate-400 uppercase">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">
+                            PRIORITY:
+                          </span>
+                          <select
+                            value={priorityFilter}
+                            onChange={(e) => setPriorityFilter(e.target.value)}
+                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-medium text-slate-800 focus:outline-none"
+                          >
+                            <option value="ALL">All Priorities</option>
+                            <option value="High Priority">High Priority</option>
+                            <option value="Medium Priority">Medium Priority</option>
+                            <option value="Low Priority">Low Priority</option>
+                            <option value="Low Priority (Expired Term)">
+                              Low Priority (Expired Term)
+                            </option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">
                             SORT BY:
                           </span>
                           <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value as any)}
-                            className="bg-white border border-slate-200 rounded-md px-2.5 py-1 text-xs font-semibold text-slate-900 focus:outline-none"
+                            className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-semibold text-slate-900 focus:outline-none"
                           >
+                            <option value="priority_desc">
+                              Investigation Priority (High → Low)
+                            </option>
+                            <option value="technical_desc">
+                              Part 1 Technical Overlap (High → Low)
+                            </option>
+                            <option value="commercial_desc">
+                              Part 2 Commercial Opportunity (High → Low)
+                            </option>
                             <option value="relevance_desc">
-                              Investigation Relevance (High → Low)
+                              Portfolio Relevance (High → Low)
                             </option>
                             <option value="term_desc">
                               Estimated Remaining Term (High → Low)
@@ -1508,151 +1715,262 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Dark-Header Matrix Table (Matches Reference Image 2) */}
+                    {/* Unified 9-Column Dark-Header Matrix Table */}
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-[#080C14] text-white text-[10px] font-mono font-bold tracking-wider uppercase">
-                            <th className="py-3.5 px-4 w-16">PRIORITY</th>
-                            <th className="py-3.5 px-4 w-44">PATENT (SOURCE FACT)</th>
-                            <th className="py-3.5 px-4">
-                              TECHNICAL SUMMARY (AI) & INDEPENDENT CLAIMS (SOURCE FACT)
+                            <th className="py-3.5 px-3.5 w-36">1. PATENT NO. &amp; DATES</th>
+                            <th className="py-3.5 px-3.5 w-64">
+                              2. PATENT TITLE, CLUSTER &amp; CLAIMS
                             </th>
-                            <th className="py-3.5 px-4 w-56">TECHNOLOGY CLUSTER & CONCEPTS</th>
-                            <th className="py-3.5 px-4 w-36">CLAIM ELEMENTS</th>
-                            <th className="py-3.5 px-4 w-36">EST. PATENT LIFE</th>
-                            <th className="py-3.5 px-4 w-44">INVESTIGATION RELEVANCE</th>
+                            <th className="py-3.5 px-3.5 w-48">3. TARGET PRODUCT / TECHNOLOGY</th>
+                            <th className="py-3.5 px-3.5 w-60">4. TECHNICAL OVERLAP (PART 1)</th>
+                            <th className="py-3.5 px-3.5 w-60">5. EVIDENCE SUPPORTING OVERLAP</th>
+                            <th className="py-3.5 px-3.5 w-32">6. PATENT STATUS</th>
+                            <th className="py-3.5 px-3.5 w-28">7. EST. LIFE</th>
+                            <th className="py-3.5 px-3.5 w-52">
+                              8. POTENTIAL MONETARY OPPORTUNITY (PART 2)
+                            </th>
+                            <th className="py-3.5 px-3.5 w-44">9. INVESTIGATION PRIORITY</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 text-xs">
-                          {filteredPatents.map((pat, idx) => {
+                          {unifiedRows.map(({ patent: pat, match: row }, idx) => {
                             const isSelected = selectedPatent?.patent_number === pat.patent_number;
-                            const score = pat.investigation_relevance?.score ?? 0;
+                            const portfolioScore = pat.investigation_relevance?.score ?? 0;
                             const totalElements = (pat.claim_elements || []).reduce(
                               (acc, cg) => acc + (cg.elements?.length || 0),
                               0
                             );
+                            const overlapLevel = row?.technical_overlap?.overlap_level || "Medium";
+                            const techScore =
+                              row?.technical_overlap?.technical_relevance_score ?? portfolioScore;
+                            const priorityTier =
+                              row?.investigation_priority?.priority_tier ||
+                              (portfolioScore >= 80
+                                ? "High Priority"
+                                : portfolioScore >= 60
+                                ? "Medium Priority"
+                                : "Low Priority");
+                            const priorityScore =
+                              row?.investigation_priority?.priority_score ?? portfolioScore;
+                            const yearsRem =
+                              row?.estimated_remaining_patent_life?.years_remaining ??
+                              pat.estimated_remaining_term_years;
 
                             return (
                               <tr
                                 key={pat.patent_number}
                                 onClick={() => setSelectedPatentNumber(pat.patent_number)}
-                                className={`cursor-pointer transition-colors ${
-                                  isSelected ? "bg-blue-50/50" : "hover:bg-slate-50/90"
+                                className={`cursor-pointer transition-colors align-top ${
+                                  isSelected
+                                    ? "bg-blue-50/60 border-l-4 border-l-blue-600"
+                                    : "hover:bg-slate-50/90"
                                 }`}
                               >
-                                {/* Column 1: Priority Rank Number */}
-                                <td className="py-4 px-4 align-top">
-                                  <span
-                                    className={`inline-flex items-center justify-center w-7 h-7 rounded-md font-mono font-bold text-xs ${
-                                      idx === 0
-                                        ? "bg-red-50 text-red-700 border border-red-200"
-                                        : "bg-slate-100 text-slate-700 border border-slate-200"
-                                    }`}
-                                  >
-                                    {idx + 1}
-                                  </span>
-                                </td>
-
-                                {/* Column 2: Patent Number, Dates & Title */}
-                                <td className="py-4 px-4 align-top">
-                                  <div className="flex items-center gap-1 font-mono font-bold text-blue-700">
-                                    <span>{pat.patent_number}</span>
-                                    <ExternalLink className="w-3 h-3 text-slate-400 shrink-0" />
+                                {/* 1. Patent Number, Rank & Dates */}
+                                <td className="py-4 px-3.5 font-mono">
+                                  <div className="flex items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex items-center justify-center w-5 h-5 rounded font-mono font-bold text-[10px] ${
+                                        idx === 0
+                                          ? "bg-red-50 text-red-700 border border-red-200"
+                                          : "bg-slate-100 text-slate-700 border border-slate-200"
+                                      }`}
+                                    >
+                                      #{idx + 1}
+                                    </span>
+                                    <span className="font-bold text-blue-700 text-xs">
+                                      {pat.patent_number}
+                                    </span>
                                   </div>
-                                  <div className="text-[11px] text-slate-500 mt-1 font-mono tabular-nums">
+                                  <div className="text-[10px] text-slate-500 mt-1.5 tabular-nums">
                                     {pat.grant_date
                                       ? `Granted: ${pat.grant_date}`
                                       : "Application (Ungranted)"}
                                   </div>
-                                  <div className="text-[11px] text-slate-400 font-mono tabular-nums">
-                                    Filed: {pat.filing_date || "Missing (0)"}
+                                  <div className="text-[10px] text-slate-400 tabular-nums">
+                                    Filed: {pat.filing_date || "Missing"}
                                   </div>
-                                  <div className="font-semibold text-slate-900 mt-2 leading-snug">
+                                  <div className="text-[10px] text-slate-500 mt-1">
+                                    CPC: {(pat.cpc_codes || []).slice(0, 2).join(" · ") || "N/A"}
+                                  </div>
+                                </td>
+
+                                {/* 2. Patent Title, Summary, Technology Cluster & Claims */}
+                                <td className="py-4 px-3.5 space-y-1.5">
+                                  <div className="font-bold text-slate-900 leading-snug">
                                     {pat.title}
                                   </div>
-                                </td>
-
-                                {/* Column 3: Technical Summary + Independent Claims */}
-                                <td className="py-4 px-4 align-top max-w-md space-y-2">
-                                  <p className="text-slate-600 leading-relaxed">
+                                  <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
                                     {pat.technical_summary}
                                   </p>
-                                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                                    {pat.independent_claims && pat.independent_claims.length > 0 ? (
-                                      <span className="font-mono text-[11px] text-blue-800 bg-blue-50 border border-blue-200/60 px-2 py-0.5 rounded">
-                                        Independent Claims:{" "}
-                                        {pat.independent_claims.map((_, i) => i + 1).join(", ")} (Verbatim)
-                                      </span>
-                                    ) : (
-                                      <span className="font-mono text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-                                        Missing Claims in Source Snapshot
-                                      </span>
-                                    )}
-                                    <span className="font-mono text-[11px] text-slate-500">
-                                      CPC: {(pat.cpc_codes || []).slice(0, 2).join(", ")}
-                                    </span>
-                                  </div>
-                                </td>
-
-                                {/* Column 4: Technology Cluster & Concepts */}
-                                <td className="py-4 px-4 align-top space-y-1.5">
-                                  <div className="font-semibold text-slate-900 leading-snug">
+                                  <div className="text-[11px] font-semibold text-slate-800 pt-0.5">
                                     {(pat.technology_areas || [])
                                       .map((a) => (a.includes(" > ") ? a.split(" > ")[1] : a))
                                       .join(" & ")}
                                   </div>
-                                  <div className="text-[11px] text-slate-500 leading-normal">
+                                  <div className="text-[10px] text-slate-500">
                                     {(pat.key_concepts || []).slice(0, 3).join(" · ")}
+                                  </div>
+                                  <div className="pt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                                    {totalElements > 0 ? (
+                                      <span className="text-emerald-800 font-semibold">
+                                        ● {totalElements} Claim Elements (Verbatim)
+                                      </span>
+                                    ) : (
+                                      <span className="text-amber-800">
+                                        ○ Missing Claims in Snapshot
+                                      </span>
+                                    )}
                                   </div>
                                 </td>
 
-                                {/* Column 5: Claim Elements Decomposed */}
-                                <td className="py-4 px-4 align-top">
-                                  {totalElements > 0 ? (
-                                    <div className="space-y-1">
-                                      <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded">
-                                        ● {totalElements} Elements
-                                      </span>
-                                      <div className="text-[11px] text-slate-500">
-                                        Click row to inspect clauses
+                                {/* 3. Target Product or Technology */}
+                                <td className="py-4 px-3.5">
+                                  {row ? (
+                                    <>
+                                      <div className="font-bold text-slate-900 leading-snug">
+                                        {row.target_product_or_service}
                                       </div>
-                                    </div>
+                                      <div className="text-[11px] font-medium text-indigo-700 mt-1">
+                                        {row.target_technology}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-1 font-mono">
+                                        Target: {row.target_company}
+                                      </div>
+                                    </>
                                   ) : (
-                                    <div className="space-y-1">
-                                      <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded">
-                                        ● 0 Elements
-                                      </span>
-                                      <div className="text-[11px] text-slate-400">
-                                        No claim text in dataset
-                                      </div>
+                                    <div className="text-[11px] text-slate-500">
+                                      No target product match in pre-fetched DB
                                     </div>
                                   )}
                                 </td>
 
-                                {/* Column 6: Estimated Patent Life */}
-                                <td className="py-4 px-4 align-top font-mono tabular-nums">
-                                  {pat.estimated_remaining_term_years === null ? (
-                                    <div>
-                                      <div className="font-bold text-amber-700">null (Missing)</div>
-                                      <div className="text-[11px] text-slate-400 font-sans">
-                                        No filing_date
-                                      </div>
+                                {/* 4. Technical Overlap (Part 1) */}
+                                <td className="py-4 px-3.5">
+                                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                                    <span
+                                      className={`text-[11px] font-mono font-bold ${
+                                        overlapLevel === "High"
+                                          ? "text-blue-700"
+                                          : overlapLevel === "Medium"
+                                          ? "text-amber-700"
+                                          : "text-slate-600"
+                                      }`}
+                                    >
+                                      {overlapLevel} Overlap
+                                    </span>
+                                    <span className="font-mono font-bold text-xs tabular-nums text-slate-900">
+                                      {techScore}/100
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mb-2">
+                                    <div
+                                      className={`h-full ${
+                                        overlapLevel === "High"
+                                          ? "bg-blue-600"
+                                          : overlapLevel === "Medium"
+                                          ? "bg-amber-500"
+                                          : "bg-slate-400"
+                                      }`}
+                                      style={{ width: `${Math.min(100, techScore)}%` }}
+                                    />
+                                  </div>
+                                  <p className="text-[11px] text-slate-600 line-clamp-3 leading-relaxed">
+                                    {row?.technical_overlap?.summary || pat.technical_summary}
+                                  </p>
+                                  {row && (
+                                    <div className="text-[10px] font-mono text-slate-500 mt-1.5">
+                                      {row.technical_overlap.has_source_claims ? (
+                                        <>
+                                          Claims:{" "}
+                                          <strong className="text-emerald-700">
+                                            {row.technical_overlap.claim_element_counts.evidence_identified}{" "}
+                                            confirmed
+                                          </strong>{" "}
+                                          · {row.technical_overlap.claim_element_counts.partial_alignment}{" "}
+                                          partial
+                                        </>
+                                      ) : (
+                                        <span className="text-amber-700">
+                                          Missing source claims (concept match)
+                                        </span>
+                                      )}
                                     </div>
-                                  ) : pat.estimated_remaining_term_years <= 0 ? (
-                                    <div>
-                                      <div className="font-bold text-slate-400">0.0 years</div>
-                                      <div className="text-[11px] text-slate-400 font-sans">
-                                        20-yr baseline elapsed
+                                  )}
+                                </td>
+
+                                {/* 5. Evidence Supporting Overlap */}
+                                <td className="py-4 px-3.5">
+                                  <div className="space-y-2">
+                                    {(row?.supporting_evidence || []).slice(0, 2).map((ev, i) => (
+                                      <div
+                                        key={i}
+                                        className="text-[11px] bg-slate-50 border border-slate-200/80 rounded p-2 space-y-1"
+                                      >
+                                        <div className="font-semibold text-slate-800 line-clamp-1">
+                                          {ev.source_title}
+                                        </div>
+                                        <p className="text-[10px] text-slate-600 line-clamp-2 italic">
+                                          &ldquo;{ev.text}&rdquo;
+                                        </p>
+                                        <a
+                                          href={ev.source_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="inline-flex items-center gap-1 text-[10px] font-mono text-blue-600 hover:underline"
+                                        >
+                                          <span>Source URL</span>
+                                          <ExternalLink className="w-2.5 h-2.5" />
+                                        </a>
                                       </div>
+                                    ))}
+                                    {(!row?.supporting_evidence ||
+                                      row.supporting_evidence.length === 0) && (
+                                      <div className="text-[11px] text-slate-400">
+                                        Source: {pat.source}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 6. Patent Status */}
+                                <td className="py-4 px-3.5">
+                                  <div
+                                    className={`text-[11px] font-semibold leading-snug ${
+                                      pat.status.toLowerCase().includes("expired")
+                                        ? "text-red-700"
+                                        : pat.status.toLowerCase().includes("application")
+                                        ? "text-amber-700"
+                                        : "text-emerald-700"
+                                    }`}
+                                  >
+                                    {pat.status}
+                                  </div>
+                                </td>
+
+                                {/* 7. Estimated Remaining Patent Life */}
+                                <td className="py-4 px-3.5 font-mono tabular-nums">
+                                  {yearsRem === null || yearsRem === undefined ? (
+                                    <div>
+                                      <div className="font-bold text-amber-700">Unknown</div>
+                                      <div className="text-[10px] text-slate-400">No filing_date</div>
+                                    </div>
+                                  ) : yearsRem <= 0 ? (
+                                    <div>
+                                      <div className="font-bold text-red-600">0.0 yrs</div>
+                                      <div className="text-[10px] text-slate-400">20-yr elapsed</div>
                                     </div>
                                   ) : (
                                     <div>
-                                      <div className="font-bold text-slate-900">
-                                        ~{pat.estimated_remaining_term_years.toFixed(1)} years
+                                      <div className="text-sm font-bold text-slate-900">
+                                        ~{Number(yearsRem).toFixed(1)} yrs
                                       </div>
-                                      <div className="text-[11px] text-slate-400">
-                                        Nominal:{" "}
+                                      <div className="text-[10px] text-slate-500 mt-0.5">
+                                        Exp:{" "}
                                         {pat.patent_life?.estimated_expiration_date_nominal?.slice(
                                           0,
                                           7
@@ -1662,28 +1980,81 @@ export default function App() {
                                   )}
                                 </td>
 
-                                {/* Column 7: Investigation Relevance */}
-                                <td className="py-4 px-4 align-top">
-                                  <div className="space-y-1">
+                                {/* 8. Potential Monetary Opportunity (Part 2) */}
+                                <td className="py-4 px-3.5">
+                                  {row ? (
+                                    <>
+                                      <div className="flex items-center justify-between gap-2 mb-1">
+                                        <span className="text-[11px] font-bold text-emerald-800 line-clamp-1">
+                                          {row.potential_monetary_opportunity.signal_tier
+                                            .split("(")[0]
+                                            .trim()}
+                                        </span>
+                                        <span className="font-mono font-bold text-xs tabular-nums text-emerald-700 shrink-0">
+                                          {
+                                            row.potential_monetary_opportunity
+                                              .commercial_opportunity_score
+                                          }
+                                          /100
+                                        </span>
+                                      </div>
+                                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mb-1.5">
+                                        <div
+                                          className="h-full bg-emerald-600"
+                                          style={{
+                                            width: `${Math.min(
+                                              100,
+                                              row.potential_monetary_opportunity
+                                                .commercial_opportunity_score
+                                            )}%`,
+                                          }}
+                                        />
+                                      </div>
+                                      <div className="text-[10px] text-slate-600 leading-snug line-clamp-2">
+                                        {row.potential_monetary_opportunity.strategic_role}
+                                      </div>
+                                      <div className="text-[10px] font-mono text-slate-500 mt-1">
+                                        10-K: $33.7B–$39.0B (Subsystem rev. undisclosed)
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div className="text-[11px] text-slate-400">N/A</div>
+                                  )}
+                                </td>
+
+                                {/* 9. Investigation Priority (Part 3 + Portfolio Relevance) */}
+                                <td className="py-4 px-3.5">
+                                  <div
+                                    className={`inline-flex items-center gap-1.5 text-xs font-bold ${
+                                      priorityTier === "High Priority"
+                                        ? "text-red-600"
+                                        : priorityTier === "Medium Priority"
+                                        ? "text-amber-700"
+                                        : "text-slate-600"
+                                    }`}
+                                  >
                                     <span
-                                      className={`inline-block font-mono text-[11px] font-bold px-2 py-0.5 rounded ${
-                                        score >= 80
-                                          ? "bg-blue-50 text-blue-700"
-                                          : score >= 60
-                                          ? "bg-amber-50 text-amber-800"
-                                          : "bg-slate-100 text-slate-700"
+                                      className={`w-2 h-2 rounded-full ${
+                                        priorityTier === "High Priority"
+                                          ? "bg-red-600"
+                                          : priorityTier === "Medium Priority"
+                                          ? "bg-amber-500"
+                                          : "bg-slate-400"
                                       }`}
-                                    >
-                                      {score >= 80
-                                        ? `High (${score}/100)`
-                                        : score >= 60
-                                        ? `Moderate (${score}/100)`
-                                        : `Low (${score}/100)`}
-                                    </span>
-                                    <div className="text-[11px] text-slate-500 line-clamp-2">
-                                      {pat.status}
-                                    </div>
+                                    />
+                                    <span>{priorityTier}</span>
                                   </div>
+                                  <div className="font-mono text-xs font-bold text-slate-900 mt-1 tabular-nums">
+                                    Priority: {priorityScore}/100
+                                  </div>
+                                  <div className="font-mono text-[10px] text-slate-500 tabular-nums">
+                                    Portfolio Relevance: {portfolioScore}/100
+                                  </div>
+                                  {row?.investigation_priority?.rationale && (
+                                    <p className="text-[10px] text-slate-600 mt-1 line-clamp-2 leading-relaxed">
+                                      {row.investigation_priority.rationale}
+                                    </p>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -1697,49 +2068,502 @@ export default function App() {
                       <div className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-blue-600"></span>
                         <span>
-                          {highPriorityCount} of {pipelineData.patents.length} Shortlisted Patents
-                          Score ≥ 80 on Investigation Relevance
+                          {highPriorityCount} High-Priority Patent–Product Relationships Ranked
                         </span>
                         <span className="text-slate-300">·</span>
-                        <span>Source: Google Patents Public Dataset</span>
+                        <span>
+                          Sources: Google Patents Public Dataset + Pre-Fetched AlloyDB Target Store
+                        </span>
                       </div>
                       <div className="font-mono text-[11px] text-slate-500">
-                        Click any row above to inspect Source Facts vs. AI Interpretation below
+                        Click any row above to inspect unified Claim Alignment, Target Evidence, 10-K Commercial Signal &amp; Source Facts below
                       </div>
                     </div>
                   </section>
 
                   {/* =============================================================
-                      SELECTED PATENT DEEP-DIVE DRAWER (Step 2, 3, 5, 6 Breakdown)
+                      UNIFIED SELECTED CANDIDATE & PATENT–TARGET MATCHING ANALYSIS
                      ============================================================= */}
                   {selectedPatent && (
                     <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                      <div className="px-6 py-4 bg-[#0B0F19] text-white flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-3">
+                      <div className="px-6 py-4 bg-[#0B0F19] text-white flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2.5">
                           <span className="font-mono text-xs font-bold text-sky-400">
-                            SELECTED CANDIDATE INSPECTOR
+                            UNIFIED CANDIDATE &amp; TARGET MATCHING ANALYSIS
                           </span>
                           <span className="text-slate-500">·</span>
                           <span className="font-mono text-sm font-bold">
                             {selectedPatent.patent_number}
                           </span>
+                          {selectedMatch && (
+                            <>
+                              <span className="text-sky-400 font-mono text-xs">↔</span>
+                              <span className="font-semibold text-xs text-emerald-300">
+                                {selectedMatch.target_product_or_service}
+                              </span>
+                            </>
+                          )}
+                          <span className="text-slate-500">·</span>
                           <span className="text-xs text-slate-300 truncate max-w-xl">
                             {selectedPatent.title}
                           </span>
                         </div>
-                        <div className="text-[11px] font-mono text-slate-300 shrink-0">
-                          Source Fact vs. AI Interpretation Verified
+                        <div className="flex items-center gap-3 text-[11px] font-mono text-slate-300 shrink-0">
+                          {selectedMatch && (
+                            <>
+                              <span>
+                                Part 1 Tech:{" "}
+                                <strong className="text-sky-300">
+                                  {selectedMatch.technical_overlap.technical_relevance_score}/100
+                                </strong>
+                              </span>
+                              <span>·</span>
+                              <span>
+                                Part 2 Comm:{" "}
+                                <strong className="text-emerald-300">
+                                  {
+                                    selectedMatch.potential_monetary_opportunity
+                                      .commercial_opportunity_score
+                                  }
+                                  /100
+                                </strong>
+                              </span>
+                              <span>·</span>
+                            </>
+                          )}
+                          <span>
+                            Priority:{" "}
+                            <strong className="text-white">
+                              {selectedMatch?.investigation_priority?.priority_tier ||
+                                `${selectedPatent.investigation_relevance?.score ?? 0}/100`}
+                            </strong>
+                          </span>
                         </div>
                       </div>
 
                       <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-                        {/* Left 5 Cols: Source Facts + Patent Life + Investigation Relevance */}
+                        {/* =========================================================
+                            LEFT 7 COLS: PART 1 TECHNICAL MATCHING & CLAIM DECOMPOSITION
+                           ========================================================= */}
+                        <div className="lg:col-span-7 space-y-5">
+                          {/* Part 1 Technical Overlap & Factor Breakdown */}
+                          {selectedMatch && (
+                            <div className="border border-slate-200 rounded-lg p-4 space-y-4">
+                              <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                                <div>
+                                  <div className="text-[11px] font-mono font-bold text-blue-700 uppercase">
+                                    PART 1 — TECHNICAL MATCHING ANALYSIS (technical_matching_agent)
+                                  </div>
+                                  <h4 className="text-base font-bold text-slate-900 mt-0.5">
+                                    {selectedPatent.patent_number} ↔{" "}
+                                    {selectedMatch.target_product_or_service}
+                                  </h4>
+                                  <div className="text-xs text-indigo-700 font-medium">
+                                    Target Technology: {selectedMatch.target_technology}
+                                  </div>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <div className="text-[10px] font-mono uppercase text-slate-400">
+                                    PART 1 TECHNICAL SCORE
+                                  </div>
+                                  <div className="text-2xl font-bold font-mono tabular-nums text-blue-700">
+                                    {selectedMatch.technical_overlap.technical_relevance_score}
+                                    <span className="text-xs text-slate-400 font-normal">/100</span>
+                                  </div>
+                                  <div className="text-[11px] font-semibold text-slate-700">
+                                    {selectedMatch.technical_overlap.overlap_level} Overlap
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bg-blue-50/50 border border-blue-200/80 rounded-lg p-3.5 space-y-1.5">
+                                <div className="text-[11px] font-mono font-bold text-blue-900 uppercase">
+                                  Evidence-Backed Technical Overlap Explanation (Screening Assessment)
+                                </div>
+                                <p className="text-xs text-slate-800 leading-relaxed">
+                                  {selectedMatch.technical_overlap.summary}
+                                </p>
+                                {selectedMatch.technical_overlap.shared_technical_mechanisms.length >
+                                  0 && (
+                                  <div className="text-[11px] font-mono text-blue-800 pt-1">
+                                    Shared Mechanisms:{" "}
+                                    {selectedMatch.technical_overlap.shared_technical_mechanisms.join(
+                                      " · "
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                                {Object.entries(
+                                  selectedMatch.technical_overlap.factor_breakdown || {}
+                                ).map(([key, fac]) => (
+                                  <div
+                                    key={key}
+                                    className="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50"
+                                  >
+                                    <div className="text-[10px] font-mono uppercase text-slate-500 truncate">
+                                      {key.replace(/_/g, " ")}
+                                    </div>
+                                    <div className="text-sm font-bold font-mono text-slate-900 mt-0.5 tabular-nums">
+                                      {fac.score} / {fac.max}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">
+                                      {fac.detail}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Unified Step 3 Claim Element Decomposition & Target Capability Mapping */}
+                          <div className="border border-slate-200 rounded-lg p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                                  Step 3 &amp; Part 1 · Independent Claim Element Decomposition ↔ Target Capability Mapping
+                                </span>
+                                <p className="text-[11px] text-slate-500">
+                                  Decomposed patent claim limitations aligned against documented target-company capabilities (no legal infringement conclusions).
+                                </p>
+                              </div>
+                              {selectedMatch && (
+                                <span className="text-[11px] font-mono text-slate-600 shrink-0">
+                                  {
+                                    selectedMatch.technical_overlap.claim_element_counts
+                                      .evidence_identified
+                                  }{" "}
+                                  Confirmed ·{" "}
+                                  {
+                                    selectedMatch.technical_overlap.claim_element_counts
+                                      .partial_alignment
+                                  }{" "}
+                                  Partial ·{" "}
+                                  {
+                                    selectedMatch.technical_overlap.claim_element_counts
+                                      .not_documented
+                                  }{" "}
+                                  Unconfirmed
+                                </span>
+                              )}
+                            </div>
+
+                            {selectedPatent.missing_claims_warning ? (
+                              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
+                                <strong>Missing Claims Handled Without Fabrication:</strong>{" "}
+                                {selectedPatent.missing_claims_warning}
+                              </div>
+                            ) : selectedMatch &&
+                              selectedMatch.technical_overlap.claim_element_mapping.length > 0 ? (
+                              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                <table className="w-full text-left border-collapse text-xs">
+                                  <thead>
+                                    <tr className="bg-slate-100 text-slate-700 font-mono text-[10px] uppercase">
+                                      <th className="py-2 px-3 w-16">ELEM</th>
+                                      <th className="py-2 px-3">
+                                        DECOMPOSED CLAIM LIMITATION (SOURCE + AI)
+                                      </th>
+                                      <th className="py-2 px-3 w-44">TARGET EVIDENCE STATUS</th>
+                                      <th className="py-2 px-3">
+                                        DOCUMENTED TARGET CAPABILITY &amp; SOURCE
+                                      </th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-200">
+                                    {selectedMatch.technical_overlap.claim_element_mapping.map(
+                                      (em) => (
+                                        <tr key={em.element_id} className="align-top hover:bg-slate-50">
+                                          <td className="py-2.5 px-3 font-mono font-bold text-blue-700">
+                                            {em.element_id}
+                                          </td>
+                                          <td className="py-2.5 px-3">
+                                            <div className="font-semibold text-slate-900">
+                                              {em.technical_concept}
+                                            </div>
+                                            <div className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+                                              {em.claim_element_description}
+                                            </div>
+                                          </td>
+                                          <td className="py-2.5 px-3 font-mono text-[10px]">
+                                            {em.alignment_status === "EVIDENCE_IDENTIFIED" ? (
+                                              <span className="font-bold text-emerald-700">
+                                                ● EVIDENCE IDENTIFIED
+                                              </span>
+                                            ) : em.alignment_status === "PARTIAL_ALIGNMENT" ? (
+                                              <span className="font-bold text-amber-700">
+                                                ◐ PARTIAL ALIGNMENT
+                                              </span>
+                                            ) : (
+                                              <span className="font-bold text-slate-500">
+                                                ○ NOT IN PUBLIC DOCS
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td className="py-2.5 px-3 text-[11px] text-slate-700">
+                                            <p className="leading-relaxed">
+                                              {em.alignment_rationale}
+                                            </p>
+                                            {em.supporting_source_url && (
+                                              <a
+                                                href={em.supporting_source_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 text-[10px] font-mono text-blue-600 hover:underline mt-1"
+                                              >
+                                                <span>{em.supporting_source_title}</span>
+                                                <ExternalLink className="w-2.5 h-2.5" />
+                                              </a>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      )
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            ) : (
+                              (selectedPatent.claim_elements || []).map((claimGroup) => (
+                                <div key={claimGroup.claim_number} className="space-y-2">
+                                  <div className="text-xs font-mono font-bold text-slate-800">
+                                    Independent Claim {claimGroup.claim_number} — Decomposed Technical Elements
+                                  </div>
+                                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                    <table className="w-full text-left border-collapse text-xs">
+                                      <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-mono text-[11px]">
+                                          <th className="py-2 px-3 w-20">ID</th>
+                                          <th className="py-2 px-3 w-48">TECHNICAL CONCEPT</th>
+                                          <th className="py-2 px-3">ELEMENT DESCRIPTION</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-200">
+                                        {claimGroup.elements.map((el) => (
+                                          <tr key={el.element_id} className="hover:bg-slate-50">
+                                            <td className="py-2.5 px-3 align-top font-mono font-bold text-blue-700">
+                                              {el.element_id}
+                                            </td>
+                                            <td className="py-2.5 px-3 align-top font-semibold text-slate-900">
+                                              {el.technical_concept}
+                                            </td>
+                                            <td className="py-2.5 px-3 align-top text-slate-600 leading-relaxed">
+                                              {el.description}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+
+                            {/* Verbatim Independent Claim Source Fact */}
+                            {(selectedPatent.independent_claims || []).length > 0 && (
+                              <div className="space-y-2 pt-2">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-semibold text-slate-800">
+                                    Verbatim Independent Claim Text (claims_localized)
+                                  </span>
+                                  <span className="font-mono text-[10px] text-slate-500">
+                                    SOURCE FACT
+                                  </span>
+                                </div>
+                                {(selectedPatent.independent_claims || []).map((clText, i) => (
+                                  <pre
+                                    key={i}
+                                    className="text-xs font-mono text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3.5 rounded-lg border border-slate-200"
+                                  >
+                                    {clText}
+                                  </pre>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Verbatim Supporting Target Evidence Chunks & Evidence Gaps */}
+                          {selectedMatch && (
+                            <div className="border border-slate-200 rounded-lg p-4 space-y-4">
+                              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                                Verbatim Supporting Target Evidence (Pre-Fetched AlloyDB Target Store)
+                              </h4>
+                              <div className="space-y-2.5">
+                                {selectedMatch.supporting_evidence.map((ev, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/60 space-y-1.5"
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-xs font-bold text-slate-900">
+                                        {ev.source_title}
+                                      </span>
+                                      <span className="text-[10px] font-mono text-slate-500">
+                                        {ev.source_type} · {ev.published_date || "Public Source"}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-700 italic leading-relaxed">
+                                      &ldquo;{ev.text}&rdquo;
+                                    </p>
+                                    <a
+                                      href={ev.source_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 font-mono text-[11px] text-blue-600 hover:underline"
+                                    >
+                                      <span>{ev.source_url}</span>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="border border-amber-200 bg-amber-50/40 rounded-lg p-3.5 space-y-1.5">
+                                <div className="text-[11px] font-mono font-bold text-amber-900 uppercase">
+                                  Evidence Gaps &amp; Unconfirmed Parameters (Requires Expert / Legal Review)
+                                </div>
+                                <ul className="list-disc list-inside space-y-1 text-xs text-slate-700 leading-relaxed">
+                                  {selectedMatch.technical_overlap.evidence_gaps.map((gap, i) => (
+                                    <li key={i}>{gap}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* =========================================================
+                            RIGHT 5 COLS: PART 2 COMMERCIAL + PART 3 PRIORITY + SOURCE FACTS
+                           ========================================================= */}
                         <div className="lg:col-span-5 space-y-5">
-                          {/* Box 1: Verbatim Source Facts */}
+                          {/* Part 2: Commercial Opportunity & SEC Form 10-K Evidence */}
+                          {selectedMatch && (
+                            <div className="border border-slate-200 rounded-lg p-4 space-y-4">
+                              <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-3">
+                                <div>
+                                  <div className="text-[11px] font-mono font-bold text-emerald-700 uppercase">
+                                    PART 2 — COMMERCIAL OPPORTUNITY (commercial_opportunity_agent)
+                                  </div>
+                                  <h4 className="text-sm font-bold text-slate-900 mt-0.5">
+                                    Commercial Significance &amp; Patent Viability
+                                  </h4>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <div className="text-[10px] font-mono uppercase text-slate-400">
+                                    PART 2 SCORE
+                                  </div>
+                                  <div className="text-2xl font-bold font-mono tabular-nums text-emerald-700">
+                                    {
+                                      selectedMatch.potential_monetary_opportunity
+                                        .commercial_opportunity_score
+                                    }
+                                    <span className="text-xs text-slate-400 font-normal">/100</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bg-emerald-50/60 border border-emerald-200 rounded-lg p-3.5 space-y-1.5">
+                                <div className="text-xs font-bold text-emerald-950">
+                                  Signal: {selectedMatch.potential_monetary_opportunity.signal_tier}
+                                </div>
+                                <p className="text-xs text-slate-800 leading-relaxed">
+                                  {selectedMatch.potential_monetary_opportunity.rationale}
+                                </p>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                {Object.entries(
+                                  selectedMatch.potential_monetary_opportunity.factor_breakdown || {}
+                                ).map(([k, fac]) => (
+                                  <div
+                                    key={k}
+                                    className="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50"
+                                  >
+                                    <div className="text-[10px] font-mono uppercase text-slate-500 truncate">
+                                      {k.replace(/_/g, " ")}
+                                    </div>
+                                    <div className="text-sm font-bold font-mono text-slate-900 mt-0.5 tabular-nums">
+                                      {fac.score} / {fac.max}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">
+                                      {fac.detail}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="border border-slate-200 rounded-lg divide-y divide-slate-200 text-xs">
+                                <div className="p-2.5 flex flex-col gap-0.5">
+                                  <span className="text-[10px] font-mono font-bold text-slate-400 uppercase">
+                                    CONSOLIDATED COMPANY REVENUE (SEC FORM 10-K)
+                                  </span>
+                                  <span className="font-semibold text-slate-900">
+                                    {selectedMatch.potential_monetary_opportunity
+                                      .consolidated_company_revenue || "Not publicly disclosed"}
+                                  </span>
+                                </div>
+                                <div className="p-2.5 flex flex-col gap-0.5 bg-amber-50/40">
+                                  <span className="text-[10px] font-mono font-bold text-amber-800 uppercase">
+                                    PRODUCT-LEVEL REVENUE GUARDRAIL (NON-FABRICATION)
+                                  </span>
+                                  <span className="text-slate-800 leading-relaxed">
+                                    {
+                                      selectedMatch.potential_monetary_opportunity
+                                        .product_level_revenue_note
+                                    }
+                                  </span>
+                                </div>
+                                <div className="p-2.5 flex flex-col gap-0.5">
+                                  <span className="text-[10px] font-mono font-bold text-slate-400 uppercase">
+                                    STRATEGIC ROLE &amp; ADOPTION SCALE
+                                  </span>
+                                  <span className="font-semibold text-slate-900">
+                                    {selectedMatch.potential_monetary_opportunity.strategic_role}
+                                  </span>
+                                  <span className="text-slate-600 text-[11px]">
+                                    {
+                                      selectedMatch.potential_monetary_opportunity
+                                        .subscriber_or_adoption_scale
+                                    }
+                                  </span>
+                                </div>
+                                <div className="p-2.5 flex flex-col gap-0.5">
+                                  <span className="text-[10px] font-mono font-bold text-slate-400 uppercase">
+                                    SUBSCRIPTION PRICING TIER LINKAGE
+                                  </span>
+                                  <span className="text-slate-800">
+                                    {
+                                      selectedMatch.potential_monetary_opportunity
+                                        .pricing_tiers_disclosed
+                                    }
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Part 3: Investigation Prioritization */}
+                          {selectedMatch && (
+                            <div className="border border-slate-200 rounded-lg p-4 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                                  Part 3 · {selectedMatch.investigation_priority.priority_tier} (
+                                  {selectedMatch.investigation_priority.priority_score}/100)
+                                </span>
+                                <span className="text-[10px] font-mono font-semibold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded">
+                                  GATEKEEPER VERIFIED
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-700 leading-relaxed">
+                                {selectedMatch.investigation_priority.rationale}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Box 1: Verbatim BigQuery Source Facts */}
                           <div className="border border-slate-200 rounded-lg p-4 space-y-3">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                                Source Facts (BigQuery Dataset)
+                                Patent Source Facts (BigQuery Dataset)
                               </span>
                               <span className="text-[10px] font-mono font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                                 SOURCE FACT
@@ -1802,11 +2626,12 @@ export default function App() {
                             )}
                           </div>
 
-                          {/* Box 2: Step 5 — Estimated Patent Life */}
+                          {/* Box 2: Step 5 — Estimated Patent Life & Step 6 Portfolio Relevance */}
                           <div className="border border-slate-200 rounded-lg p-4 space-y-2.5">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                                Step 5 · Estimated Patent Term
+                                Step 5 &amp; 6 · Patent Term &amp; Portfolio Relevance (
+                                {selectedPatent.investigation_relevance?.score}/100)
                               </span>
                               <span className="text-[10px] font-mono font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded">
                                 DETERMINISTIC PYTHON
@@ -1830,19 +2655,7 @@ export default function App() {
                                 </p>
                               </>
                             )}
-                          </div>
-
-                          {/* Box 3: Step 6 — Explainable Investigation Relevance */}
-                          <div className="border border-slate-200 rounded-lg p-4 space-y-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                                Step 6 · Investigation Relevance ({selectedPatent.investigation_relevance?.score}/100)
-                              </span>
-                              <span className="text-[10px] font-mono font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded">
-                                EXPLAINABLE SCORING
-                              </span>
-                            </div>
-                            <ul className="space-y-1.5 text-xs text-slate-600 list-disc pl-4">
+                            <ul className="space-y-1 text-xs text-slate-600 list-disc pl-4 pt-1">
                               {(selectedPatent.investigation_relevance?.reasons || []).map(
                                 (reason, idx) => (
                                   <li key={idx} className="leading-relaxed">
@@ -1851,89 +2664,6 @@ export default function App() {
                                 )
                               )}
                             </ul>
-                          </div>
-                        </div>
-
-                        {/* Right 7 Cols: Step 3 — Independent Claim & Decomposed Claim Elements */}
-                        <div className="lg:col-span-7 space-y-5">
-                          <div className="border border-slate-200 rounded-lg p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
-                                  Step 3 · Claim Element Decomposition
-                                </span>
-                                <p className="text-[11px] text-slate-500">
-                                  Structured technical representations for downstream target-company evidence comparison (no legal conclusions).
-                                </p>
-                              </div>
-                              <span className="text-[10px] font-mono font-semibold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded">
-                                AI INTERPRETATION + SOURCE CLAIMS
-                              </span>
-                            </div>
-
-                            {selectedPatent.missing_claims_warning ? (
-                              <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900">
-                                <strong>Missing Claims Handled Without Fabrication:</strong>{" "}
-                                {selectedPatent.missing_claims_warning}
-                              </div>
-                            ) : (
-                              <>
-                                {/* Decomposed Elements Table */}
-                                {(selectedPatent.claim_elements || []).map((claimGroup) => (
-                                  <div key={claimGroup.claim_number} className="space-y-2">
-                                    <div className="text-xs font-mono font-bold text-slate-800">
-                                      Independent Claim {claimGroup.claim_number} — Decomposed Technical Elements
-                                    </div>
-                                    <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                      <table className="w-full text-left border-collapse text-xs">
-                                        <thead>
-                                          <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-mono text-[11px]">
-                                            <th className="py-2 px-3 w-20">ID</th>
-                                            <th className="py-2 px-3 w-48">TECHNICAL CONCEPT</th>
-                                            <th className="py-2 px-3">ELEMENT DESCRIPTION</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-200">
-                                          {claimGroup.elements.map((el) => (
-                                            <tr key={el.element_id} className="hover:bg-slate-50">
-                                              <td className="py-2.5 px-3 align-top font-mono font-bold text-blue-700">
-                                                {el.element_id}
-                                              </td>
-                                              <td className="py-2.5 px-3 align-top font-semibold text-slate-900">
-                                                {el.technical_concept}
-                                              </td>
-                                              <td className="py-2.5 px-3 align-top text-slate-600 leading-relaxed">
-                                                {el.description}
-                                              </td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </div>
-                                ))}
-
-                                {/* Verbatim Independent Claim Source Fact */}
-                                <div className="space-y-2 pt-2">
-                                  <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-slate-800">
-                                      Verbatim Independent Claim Text (claims_localized)
-                                    </span>
-                                    <span className="font-mono text-[10px] text-slate-500">
-                                      SOURCE FACT
-                                    </span>
-                                  </div>
-                                  {(selectedPatent.independent_claims || []).map((clText, i) => (
-                                    <pre
-                                      key={i}
-                                      className="text-xs font-mono text-slate-700 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3.5 rounded-lg border border-slate-200"
-                                    >
-                                      {clText}
-                                    </pre>
-                                  ))}
-                                </div>
-                              </>
-                            )}
                           </div>
                         </div>
                       </div>

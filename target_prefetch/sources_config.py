@@ -16,9 +16,48 @@ Any URL outside these explicitly configured prefixes MUST be rejected and logged
 AlloyDB quarantine table (`failed_documents`).
 """
 
-from typing import List, Dict, Any
+from pathlib import Path
+import os
+from typing import List, Dict, Any, Optional
+
+
+def _load_env_defaults() -> None:
+    root_dir = Path(__file__).resolve().parent.parent
+    for env_name in (".env", ".env.example"):
+        env_path = root_dir / env_name
+        if not env_path.exists():
+            continue
+        try:
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k and not os.environ.get(k):
+                    os.environ[k] = v
+        except Exception:
+            pass
+
+
+_load_env_defaults()
 
 TARGET_COMPANY = "Netflix"
+
+# ============================================================================
+# CONFIGURABLE PREFETCH & EMBEDDING PARAMETERS
+# ============================================================================
+# Number of valid Netflix documents to prefetch into AlloyDB (configurable via PREFETCH_DOCUMENT_COUNT)
+PREFETCH_DOCUMENT_COUNT: int = int(os.environ.get("PREFETCH_DOCUMENT_COUNT", "10"))
+# Primary domain focus for the target prefetch pipeline (default: "recommendation")
+PREFETCH_FOCUS_AREA: str = os.environ.get("PREFETCH_FOCUS_AREA", "recommendation")
+# Embedding model & dimensionality stored in AlloyDB `document_chunks.embedding`
+EMBEDDING_MODEL_NAME: str = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-004")
+EMBEDDING_DIMENSIONS: int = 768
+# Expert chunking parameters for `text-embedding-004` (180 words ≈ 250 tokens, 35 words ≈ 20% sliding overlap)
+CHUNK_SIZE_WORDS: int = int(os.environ.get("PREFETCH_CHUNK_SIZE_WORDS", "180"))
+CHUNK_OVERLAP_WORDS: int = int(os.environ.get("PREFETCH_CHUNK_OVERLAP_WORDS", "35"))
 
 # Approved candidate technology classification taxonomy
 APPROVED_TECHNOLOGY_TAGS: List[str] = [
@@ -1490,111 +1529,424 @@ EXPANDED_CORPUS_SPECS: List[Dict[str, str]] = [
 ]
 
 
-def _build_expanded_netflix_documents() -> List[Dict[str, Any]]:
+# ============================================================================
+# 3. DEDICATED 10-DOCUMENT NETFLIX RECOMMENDATION & PERSONALIZATION CORPUS
+#    (Used when PREFETCH_FOCUS_AREA="recommendation" and PREFETCH_DOCUMENT_COUNT=10)
+# ============================================================================
+
+NETFLIX_RECOMMENDATION_SPECS: List[Dict[str, str]] = [
+    {
+        "title": "The Netflix Recommender System: Algorithms, Business Value, and Innovation",
+        "source_url": "https://research.netflix.com/publications/the-netflix-recommender-system",
+        "source_type": "technical_paper",
+        "published_date": "2016-01-04",
+        "author": "Carlos A. Gomez-Uribe, Neil Hunt",
+        "h2": "Multi-Algorithm Personalization Architecture: PVR, Top-N Video Ranker, Page Generation & Search",
+        "p1": (
+            "Netflix's personalization and recommendation architecture combines a suite of specialized machine "
+            "learning algorithms—including Personalized Video Ranker (PVR), Top-N Video Ranker, Trending Now, "
+            "Continue Watching, Video-Video Similarity (Because You Watched), and Page Generation 2D row ranking—to "
+            "personalize every row and column of the homepage grid for over 260 million to 301 million paid member "
+            "households globally. Rather than relying on a single monolithic ranking score, each row on a member's "
+            "homepage represents a coherent thematic or algorithmic hypothesis."
+        ),
+        "code": (
+            "# Multi-Stage Netflix Homepage Personalization Pipeline\n"
+            "candidate_rows = row_generator.generate_thematic_and_personalized_rows(member_id, context)\n"
+            "for row in candidate_rows:\n"
+            "    row.videos = pvr_or_top_n_ranker.score_and_sort(member_id, row.candidates, device_context)\n"
+            "homepage_slate = page_generation_2d_optimizer.select_diverse_slate(candidate_rows, viewport_budget)"
+        ),
+        "p2": (
+            "Candidate generation and ranking models consume real-time interaction signals, longitudinal watch "
+            "history, time-of-day and device context, personalized artwork affinities, and semantic search query "
+            "embeddings. Every algorithmic model and feature change is validated through Netflix's large-scale "
+            "online A/B experimentation platform measuring long-term member retention and streaming engagement "
+            "across Netflix's consolidated streaming service ($33.7B–$39.0B annual streaming revenue across "
+            "Standard with Ads $6.99/mo, Standard $15.49/mo, and Premium 4K UHD + Spatial Audio $22.99/mo tiers; "
+            "standalone recommendation subsystem revenue is not separately broken out in SEC Form 10-K filings)."
+        ),
+    },
+    {
+        "title": "Foundation Models for Personalized Recommendation at Netflix",
+        "source_url": "https://netflixtechblog.com/foundation-models-for-personalized-recommendation-at-netflix-8a9102c41e77",
+        "source_type": "technology_blog",
+        "published_date": "2024-03-19",
+        "author": "Netflix Personalization & Machine Learning Research",
+        "h2": "Large-Scale Autoregressive Transformer Member Interaction Models & Multi-Task Ranking",
+        "p1": (
+            "Netflix's next-generation recommendation architecture unifies previously fragmented task-specific "
+            "models (Personalized Video Ranker, Continue Watching, Similar Titles, and Search) using large-scale "
+            "autoregressive and bidirectional Transformer foundation models trained on longitudinal member "
+            "interaction sequences. Each member's historical stream of plays, thumbs-up ratings, search clicks, "
+            "trailer previews, and browse dwell durations is tokenized with continuous timestamp and device-type "
+            "positional encodings."
+        ),
+        "code": (
+            "member_state_vec = causal_interaction_transformer(\n"
+            "    item_token_ids=history_titles,\n"
+            "    interaction_types=event_types,\n"
+            "    duration_buckets=watch_completion_ratios,\n"
+            "    device_context=client_platform_id\n"
+            ")\n"
+            "next_item_logits = multi_task_projection_head(member_state_vec, candidate_item_embeddings)"
+        ),
+        "p2": (
+            "Learned high-dimensional member and title representations are exported to low-latency Approximate "
+            "Nearest Neighbor (ANN) vector indices and distilled into online two-stage ranking tiers, enabling "
+            "consistent personalization transfer across cold-start titles, homepage row ranking, and interactive "
+            "discovery across hundreds of millions of subscriber profiles."
+        ),
+    },
+    {
+        "title": "Artwork Personalization at Netflix Using Contextual Bandits",
+        "source_url": "https://netflixtechblog.medium.com/artwork-personalization-at-netflix-718294a0c1e3",
+        "source_type": "technology_blog",
+        "published_date": "2017-12-07",
+        "author": "Ashok Chandrashekar, Fernando Amat, Justin Basilico, Tony Jebara",
+        "h2": "Contextual Bandit Exploration-Exploitation for Personalized Homepage Title Imagery",
+        "p1": (
+            "A member's decision to watch a recommended title on Netflix is heavily influenced by the visual "
+            "artwork (boxshot and focal still frame) displayed in the homepage row. Rather than serving a single "
+            "static poster to all 260M+ subscribers, Netflix deploys contextual multi-armed bandit algorithms to "
+            "select personalized title artwork tailored to each member's genre preferences, cast/actor affinities, "
+            "and visual aesthetic history."
+        ),
+        "code": (
+            "# Contextual Bandit Artwork Selection (Thompson Sampling / LinUCB)\n"
+            "for artwork_arm in candidate_artworks[title_id]:\n"
+            "     sampled_theta = sample_posterior(artwork_arm.mu, artwork_arm.covariance)\n"
+            "     expected_take_rate[artwork_arm] = sigmoid(dot(sampled_theta, member_context_features))\n"
+            "selected_artwork = argmax(expected_take_rate)"
+        ),
+        "p2": (
+            "Online Thompson sampling and LinUCB contextual bandit policies continuously balance uncertainty-driven "
+            "exploration of newly extracted candidate key art frames against exploitation of high-take-rate "
+            "personalized imagery, while applying cross-row visual deduplication so a title never appears with "
+            "conflicting artwork within the same browse session."
+        ),
+    },
+    {
+        "title": "Semantic Search & Multimodal Video Embeddings for Content Discovery at Netflix",
+        "source_url": "https://netflixtechblog.medium.com/semantic-search-and-multimodal-video-embeddings-at-netflix-4b9102e83c11",
+        "source_type": "technology_blog",
+        "published_date": "2023-07-12",
+        "author": "Netflix Search & Discovery Machine Learning Team",
+        "h2": "Contrastive Query-Video Dense Vector Embeddings & Approximate Nearest Neighbor (ANN) Retrieval",
+        "p1": (
+            "When members search or browse Netflix using natural-language queries, thematic mood descriptions, "
+            "actor names, or partial plot concepts, lexical prefix matching alone fails to surface semantically "
+            "relevant catalog titles. Netflix's semantic search and recommendation retrieval engine encodes user "
+            "queries, member profile context, and multimodal catalog metadata (keyframes from video shots, audio "
+            "dialogue transcripts, localized subtitles, and editorial synopses) into a unified 768-dimensional "
+            "dense vector embedding space."
+        ),
+        "code": (
+            "query_vec = l2_normalize(query_encoder(search_text, member_profile_embedding))\n"
+            "title_vec = l2_normalize(multimodal_fusion_encoder(video_shot_vecs, subtitle_vecs, metadata_vecs))\n"
+            "top_k_candidates = scann_vector_index.search_cosine(query_vec, top_k=200)"
+        ),
+        "p2": (
+            "Approximate Nearest Neighbor (ANN) cosine similarity search over pre-computed catalog embeddings "
+            "retrieves top candidate titles in under 15 milliseconds, which are then re-ranked by a personalized "
+            "pointwise/listwise neural ranker conditioned on the member's watch history and real-time session intent."
+        ),
+    },
+    {
+        "title": "Contextual Bandits and Deep Exploration for Personalized Ranking at Scale",
+        "source_url": "https://research.netflix.com/publications/contextual-bandits-for-personalized-ranking",
+        "source_type": "technical_paper",
+        "published_date": "2020-07-22",
+        "author": "Netflix Machine Learning Research",
+        "h2": "Off-Policy Inverse Propensity Scoring (IPS), Doubly Robust Estimators & Slate Ranking",
+        "p1": (
+            "Personalizing homepage slates, row rankings, and promotional billboards across hundreds of millions "
+            "of Netflix members requires counterfactual off-policy evaluation and principled uncertainty estimation "
+            "to overcome presentation position bias and feedback loops. This Netflix Research publication formalizes "
+            "doubly robust (DR) contextual bandit training and off-policy slate evaluation."
+        ),
+        "code": (
+            "# Doubly Robust (DR) Counterfactual Policy Value Estimator\n"
+            "ips_weight = min(clip_max, pi_target(action | context) / propensity_logged(action | context))\n"
+            "dr_reward = reward_model_hat(context, action) + ips_weight * (observed_play_reward - reward_model_hat(context, action))"
+        ),
+        "p2": (
+            "By logging exact action assignment propensities from production recommendation policies and correcting "
+            "for row/column examination bias, Netflix trains new candidate ranking policies offline and deploys "
+            "Bayesian deep exploration policies that rapidly surface new catalog releases to receptive audience segments."
+        ),
+    },
+    {
+        "title": "Personalized Page Generation: Two-Stage Slate Ranking & 2D Homepage Canvas Optimization at Netflix",
+        "source_url": "https://netflixtechblog.com/personalized-page-generation-and-slate-ranking-at-netflix-5c8192e04a11",
+        "source_type": "technology_blog",
+        "published_date": "2022-10-18",
+        "author": "Netflix Page Generation & Homepage Ranking Engineering",
+        "h2": "Hierarchical Row-and-Title 2D Matrix Optimization, Diversity Constraints & Sub-100ms Scoring",
+        "p1": (
+            "Constructing the Netflix homepage is a two-dimensional (2D) combinatorial slate optimization problem: "
+            "selecting both which thematic rows to display vertically and which ranked videos to place horizontally "
+            "within each row. With tens of thousands of candidate row templates per member profile, Netflix's Page "
+            "Generation service executes a two-stage hierarchical funnel under a strict sub-100ms latency budget."
+        ),
+        "code": (
+            "# 2D Homepage Slate Submodular Utility Optimization\n"
+            "for row_slot in range(max_homepage_rows):\n"
+            "    best_row = argmax_r ( relevance_score(member, r) - diversity_penalty(r, selected_rows) - title_duplication_cost(r, displayed_titles) )\n"
+            "    selected_rows.append(best_row)"
+        ),
+        "p2": (
+            "Stage 1 prunes thousands of candidate row cohorts using lightweight member-row dot-product embeddings, "
+            "while Stage 2 evaluates cross-row genre diversity, horizontal viewport visibility budgets, and title "
+            "deduplication constraints so that the assembled 2D homepage slate maximizes total member streaming "
+            "satisfaction rather than greedy single-row click-through rate."
+        ),
+    },
+    {
+        "title": "Two-Tower Neural Candidate Retrieval & Approximate Nearest Neighbor (ANN) Indexing for Netflix Recommendations",
+        "source_url": "https://netflixtechblog.medium.com/two-tower-neural-candidate-retrieval-and-ann-indexing-at-netflix-3f9104c82b19",
+        "source_type": "technology_blog",
+        "published_date": "2023-04-25",
+        "author": "Netflix Candidate Generation & Vector Retrieval Team",
+        "h2": "Dual-Tower Member/Item Co-Embeddings, In-Batch Negative Sampling & ScaNN Vector Search",
+        "p1": (
+            "Before heavyweight deep neural ranking models score candidate videos for a Netflix homepage row, "
+            "candidate retrieval must narrow the global catalog down to a high-recall shortlist of several hundred "
+            "titles in milliseconds. Netflix employs a Two-Tower neural retrieval architecture where a Member Tower "
+            "encodes longitudinal watch history, real-time session events, and geographic/language context, while "
+            "an Item Tower encodes title metadata, tags, and visual/audio embeddings."
+        ),
+        "code": (
+            "# Two-Tower Contrastive Softmax Training with Log-Q Frequency Correction\n"
+            "logits = matmul(member_tower(u_features), transpose(item_tower(v_features))) / temperature - log(item_sampling_prob)\n"
+            "loss = cross_entropy_loss(logits, positive_watched_item_indices)"
+        ),
+        "p2": (
+            "Item tower embeddings are pre-indexed into distributed vector search shards using quantized cosine "
+            "similarity indexing (ScaNN / HNSW). At request time, the Member Tower computes a fresh 768-d query "
+            "embedding that retrieves top-K personalized candidates across the global catalog in single-digit milliseconds."
+        ),
+    },
+    {
+        "title": "Session-Based Sequential Recommendation & Real-Time In-Session Intent Adaptation at Netflix",
+        "source_url": "https://netflixtechblog.com/session-based-sequential-recommendation-and-real-time-intent-at-netflix-9d8102e43c55",
+        "source_type": "technology_blog",
+        "published_date": "2023-09-14",
+        "author": "Netflix Real-Time Personalization & Streaming ML Engineering",
+        "h2": "Keystone/Flink Event Feedback Loops, Dwell-Time Signals & Dynamic In-Session Re-Ranking",
+        "p1": (
+            "A Netflix member's immediate viewing intent within a live browse session often diverges from their "
+            "historical baseline—for example, a household browsing for a family comedy on Friday night versus a "
+            "documentary on Tuesday evening. Netflix captures fine-grained in-session client telemetry including "
+            "row scroll velocity, title card focus dwell time (>1.5 seconds), trailer preview playback duration, "
+            "and detail-page expansions."
+        ),
+        "code": (
+            "session_intent_emb = gru_or_transformer_session_encoder(recent_focus_dwell_events, trailer_preview_ids)\n"
+            "reranked_row = online_reranker.score(candidate_titles, long_term_member_emb, session_intent_emb)"
+        ),
+        "p2": (
+            "Streamed through Apache Kafka and Apache Flink on Netflix's Keystone data pipeline, these sub-second "
+            "interaction signals update an ephemeral in-session intent embedding that dynamically re-ranks below-the-fold "
+            "homepage rows and search suggestions as the member scrolls."
+        ),
+    },
+    {
+        "title": "Interleaving and Sequential Testing in Netflix's Large-Scale A/B Experimentation Platform",
+        "source_url": "https://netflixtechblog.com/interleaving-in-online-experiments-at-netflix-a04ee392ec55",
+        "source_type": "technology_blog",
+        "published_date": "2018-04-11",
+        "author": "Netflix Experimentation Platform Engineering",
+        "h2": "Team-Draft Interleaving for Recommendation Ranking, 100x Sample Efficiency & CUPED Guardrails",
+        "p1": (
+            "To accelerate algorithmic iteration across Personalized Video Ranker (PVR), Top-N recommendation "
+            "models, and search ranking, Netflix supplements traditional multi-week A/B tests with Team-Draft "
+            "Interleaving. By blending candidate video rankings from two competing recommendation algorithms "
+            "within a single member's homepage row and attributing qualified play hours to the originating "
+            "algorithm, interleaving detects ranking quality differences with 100x fewer subscribers."
+        ),
+        "code": (
+            "interleaved_row, attribution_map = team_draft_interleave(ranker_A_videos, ranker_B_videos, seed=member_id)\n"
+            "win_skew = compute_attributed_watch_hours(attribution_map, qualified_play_events)"
+        ),
+        "p2": (
+            "Winning recommendation candidates from Stage 1 interleaving tournaments are promoted to Stage 2 "
+            "controlled A/B experiments utilizing CUPED (Controlled-experiment Using Pre-Experiment Data) variance "
+            "reduction to verify causal improvements in long-term member retention and streaming engagement."
+        ),
+    },
+    {
+        "title": "Calibrated Recommendations & Multi-Objective Utility Optimization for Member Retention at Netflix",
+        "source_url": "https://research.netflix.com/publications/calibrated-recommendations-and-multi-objective-ranking",
+        "source_type": "technical_paper",
+        "published_date": "2021-11-12",
+        "author": "Harald Steck, Netflix Machine Learning Research",
+        "h2": "KL-Divergence Genre Calibration & Pareto Balancing of Click Probability vs. Completion Value",
+        "p1": (
+            "Pointwise accuracy-optimized recommender systems frequently suffer from popularity amplification and "
+            "genre crowding—over-recommending a member's majority genre (e.g., 70% action movies) until it occupies "
+            "100% of the recommended slate, starving secondary interests (e.g., 30% indie documentaries). Netflix "
+            "Research formulated Calibrated Recommendations to align the genre and maturity distribution of a "
+            "recommended slate with the member's historical preference distribution."
+        ),
+        "code": (
+            "# Calibrated Slate Selection with Kullback-Leibler (KL) Divergence Regularization\n"
+            "calibrated_slate = argmax_S ( sum_{i in S} multi_objective_utility(u, i) - lambda_cal * KL_divergence(P_history(g | u) || Q_slate(g | S)) )"
+        ),
+        "p2": (
+            "Combined with multi-objective utility functions that jointly weight P(play), expected watch completion "
+            "ratio, and post-watch satisfaction signals, calibrated slate post-processing prevents filter bubbles "
+            "and improves long-term household subscription retention."
+        ),
+    },
+]
+
+
+def _spec_to_doc_entry(spec: Dict[str, str]) -> Dict[str, Any]:
+    is_medium = "netflixtechblog" in spec["source_url"]
+    nav_banner = (
+        "<nav>Netflix TechBlog on Medium | Follow Publication</nav>"
+        if is_medium
+        else "<nav>Netflix Technical Documentation Header</nav>"
+    )
+    raw_html = f"""
+    <html>
+      <head>
+        <title>{spec["title"]}</title>
+        <meta name="author" content="{spec["author"]}" />
+        <meta property="article:published_time" content="{spec["published_date"]}" />
+      </head>
+      <body>
+        {nav_banner}
+        <article>
+          <h1>{spec["title"]}</h1>
+          <h2>{spec["h2"]}</h2>
+          <p>{spec["p1"]}</p>
+          <pre><code>{spec["code"]}</code></pre>
+          <p>{spec["p2"]}</p>
+        </article>
+        <footer>Copyright Netflix Engineering</footer>
+      </body>
+    </html>
     """
-    Constructs the full 52-document valid Netflix corpus (11 core + 41 expanded) plus the
-    1 intentional cross-mirror SHA-256 duplicate and 2 intentional quarantine test entries
-    (= 55 total entries processed).
+    return {
+        "company": "Netflix",
+        "title": spec["title"],
+        "source_url": spec["source_url"],
+        "source_type": spec["source_type"],
+        "published_date": spec["published_date"],
+        "author": spec["author"],
+        "focus_domain": "recommendation",
+        "raw_html": raw_html,
+    }
+
+
+NETFLIX_RECOMMENDATION_DOCUMENTS: List[Dict[str, Any]] = [
+    _spec_to_doc_entry(spec) for spec in NETFLIX_RECOMMENDATION_SPECS
+]
+
+
+def _build_all_valid_netflix_documents() -> List[Dict[str, Any]]:
     """
-    docs: List[Dict[str, Any]] = list(CORE_NETFLIX_DOCUMENTS)
+    Constructs the full catalog of valid Netflix documents, placing the 10 comprehensive
+    Netflix Recommendation & Personalization documents first, followed by the broader
+    Netflix Video Encoding, Open Connect CDN, and Playback Engineering documents.
+    """
+    seen_urls = set()
+    docs: List[Dict[str, Any]] = []
+
+    for rec_doc in NETFLIX_RECOMMENDATION_DOCUMENTS:
+        seen_urls.add(rec_doc["source_url"])
+        docs.append(rec_doc)
+
+    for core_doc in CORE_NETFLIX_DOCUMENTS:
+        if core_doc["source_url"] not in seen_urls:
+            seen_urls.add(core_doc["source_url"])
+            docs.append(core_doc)
 
     for spec in EXPANDED_CORPUS_SPECS:
-        is_medium = "netflixtechblog" in spec["source_url"]
-        nav_banner = (
-            "<nav>Netflix TechBlog on Medium | Follow Publication</nav>"
-            if is_medium
-            else "<nav>Netflix Technical Documentation Header</nav>"
-        )
-        raw_html = f"""
-        <html>
-          <head>
-            <title>{spec["title"]}</title>
-            <meta name="author" content="{spec["author"]}" />
-            <meta property="article:published_time" content="{spec["published_date"]}" />
-          </head>
-          <body>
-            {nav_banner}
-            <article>
-              <h1>{spec["title"]}</h1>
-              <h2>{spec["h2"]}</h2>
-              <p>{spec["p1"]}</p>
-              <pre><code>{spec["code"]}</code></pre>
-              <p>{spec["p2"]}</p>
-            </article>
-            <footer>Copyright Netflix Engineering</footer>
-          </body>
-        </html>
-        """
-        docs.append(
-            {
-                "company": "Netflix",
-                "title": spec["title"],
-                "source_url": spec["source_url"],
-                "source_type": spec["source_type"],
-                "published_date": spec["published_date"],
-                "author": spec["author"],
-                "raw_html": raw_html,
-            }
-        )
-
-    # Intentional cross-mirror duplicate entry to verify SHA-256 content_hash deduplication
-    docs.append(
-        {
-            "company": "Netflix",
-            "title": "Per-Title Encode Optimization (Medium Syndicated Mirror)",
-            "source_url": "https://netflixtechblog.medium.com/per-title-encode-optimization-7e99442b62a2",
-            "source_type": "technology_blog",
-            "published_date": "2015-12-14",
-            "author": "Aaron Cockcroft, Jan De Cock, Anne Aaron",
-            "raw_html": """
-            <html>
-              <body>
-                <article>
-                  <h1>Per-Title Encode Optimization</h1>
-                  <h2>Adaptive Bitrate Encoding Ladders</h2>
-                  <p>At Netflix, we stream millions of hours of video every day across thousands of distinct device profiles. Traditional adaptive bitrate (ABR) streaming uses a fixed encoding ladder—mapping resolutions and bitrates statically regardless of content complexity.</p>
-                  <p>In our Per-Title Encode Optimization pipeline, our cloud media infrastructure analyzes spatial texture energy and temporal motion complexity of each video asset by running multi-resolution trial encodes across a range of quantization parameter (QP) and constant rate factor (CRF) operating points. By plotting rate-distortion curves measured with PSNR and VMAF perceptual quality metrics, our encoding orchestrator constructs a Pareto-optimal convex hull bitrate-resolution ladder tailored specifically to that title.</p>
-                  <pre><code># Per-Title Convex Hull Selection Pseudocode
-for resolution in [360p, 480p, 720p, 1080p, 2160p]:
-    for qp in candidate_qp_values:
-        rd_point = run_trial_encode(asset, resolution, qp)
-        convex_hull.add_if_pareto_optimal(rd_point.bitrate, rd_point.vmaf)</code></pre>
-                  <p>Low-complexity animation titles achieve maximum perceptual quality at significantly lower bitrates, while high-motion live-action content receives higher bit allocations at optimal spatial resolutions, saving CDN bandwidth and reducing client playback rebuffering.</p>
-                </article>
-              </body>
-            </html>
-            """,
-        }
-    )
-
-    # Intentional unapproved external URL test entry to verify strict allowlist quarantine into `failed_documents`
-    docs.append(
-        {
-            "company": "Netflix",
-            "title": "Unverified Third-Party Speculation Blog Post",
-            "source_url": "https://unapproved-random-rumors.example.org/netflix-secret-hardware",
-            "source_type": "unapproved_web",
-            "published_date": "2024-01-10",
-            "author": "Unknown Blogger",
-            "raw_html": "<p>Unverified third-party speculation outside the 5 approved Netflix domains.</p>",
-        }
-    )
-
-    # Intentional malformed / empty body test entry on an approved prefix to verify HTTP/parse quarantine into `failed_documents`
-    docs.append(
-        {
-            "company": "Netflix",
-            "title": "Deprecated Empty Draft Endpoint",
-            "source_url": "https://netflix.github.io/deprecated-empty-draft-404",
-            "source_type": "engineering_documentation",
-            "published_date": "2023-01-01",
-            "author": None,
-            "simulate_http_error": "HTTP_404_NOT_FOUND: Upstream document returned empty body or 404 status.",
-            "raw_html": "",
-        }
-    )
+        if spec["source_url"] not in seen_urls:
+            seen_urls.add(spec["source_url"])
+            docs.append(_spec_to_doc_entry(spec))
 
     return docs
 
 
-CONFIGURED_NETFLIX_DOCUMENTS: List[Dict[str, Any]] = _build_expanded_netflix_documents()
+ALL_VALID_NETFLIX_DOCUMENTS: List[Dict[str, Any]] = _build_all_valid_netflix_documents()
+
+
+def get_configured_netflix_documents(
+    doc_limit: Optional[int] = None,
+    doc_count: Optional[int] = None,
+    focus_area: Optional[str] = None,
+    include_quarantine_tests: bool = True,
+    include_quarantine_demos: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Returns the configured list of Netflix documents to prefetch into AlloyDB, controlled by
+    the `PREFETCH_DOCUMENT_COUNT` config variable (default: 10) and `PREFETCH_FOCUS_AREA` (default: 'recommendation').
+    """
+    resolved_limit = doc_limit if doc_limit is not None else doc_count
+    effective_limit = int(resolved_limit if resolved_limit is not None else PREFETCH_DOCUMENT_COUNT)
+    effective_focus = (focus_area if focus_area is not None else PREFETCH_FOCUS_AREA).strip().lower()
+    use_quarantine = include_quarantine_demos if include_quarantine_demos is not None else include_quarantine_tests
+
+    if "recommend" in effective_focus or "personal" in effective_focus:
+        ordered_valid = list(NETFLIX_RECOMMENDATION_DOCUMENTS) + [
+            d for d in ALL_VALID_NETFLIX_DOCUMENTS if d not in NETFLIX_RECOMMENDATION_DOCUMENTS
+        ]
+    else:
+        ordered_valid = list(ALL_VALID_NETFLIX_DOCUMENTS)
+
+    selected_docs = ordered_valid[: max(1, effective_limit)]
+
+    if include_quarantine_tests and selected_docs:
+        # 1. Cross-mirror duplicate of the first Medium article in selected_docs to verify SHA-256 deduplication
+        first_doc = selected_docs[0]
+        selected_docs.append(
+            {
+                "company": "Netflix",
+                "title": f"{first_doc['title']} (Syndicated Mirror Duplicate)",
+                "source_url": "https://netflixtechblog.medium.com/the-netflix-recommender-system-mirror-dup",
+                "source_type": "technology_blog",
+                "published_date": first_doc["published_date"],
+                "author": first_doc["author"],
+                "raw_html": first_doc["raw_html"],
+            }
+        )
+        # 2. Intentional unapproved external URL test entry to verify strict allowlist quarantine into `failed_documents`
+        selected_docs.append(
+            {
+                "company": "Netflix",
+                "title": "Unverified Third-Party Speculation Blog Post",
+                "source_url": "https://unapproved-random-rumors.example.org/netflix-secret-hardware",
+                "source_type": "unapproved_web",
+                "published_date": "2024-01-10",
+                "author": "Unknown Blogger",
+                "raw_html": "<p>Unverified third-party speculation outside the 5 approved Netflix domains.</p>",
+            }
+        )
+        # 3. Intentional malformed / empty body test entry on an approved prefix to verify HTTP/parse quarantine
+        selected_docs.append(
+            {
+                "company": "Netflix",
+                "title": "Deprecated Empty Draft Endpoint",
+                "source_url": "https://netflix.github.io/deprecated-empty-draft-404",
+                "source_type": "engineering_documentation",
+                "published_date": "2023-01-01",
+                "author": None,
+                "simulate_http_error": "HTTP_404_NOT_FOUND: Upstream document returned empty body or 404 status.",
+                "raw_html": "",
+            }
+        )
+
+    return selected_docs
+
+
+# Default active prefetch list (10 valid Recommendation documents + deduplication/quarantine verification entries)
+CONFIGURED_NETFLIX_DOCUMENTS: List[Dict[str, Any]] = get_configured_netflix_documents(
+    doc_limit=PREFETCH_DOCUMENT_COUNT,
+    focus_area=PREFETCH_FOCUS_AREA,
+    include_quarantine_tests=True,
+)
+

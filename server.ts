@@ -9,9 +9,29 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config();
 
+// Ensure Local Medium MCP Server environment variables are configured
+process.env.MEDIUM_MCP_SERVER_URL =
+  process.env.MEDIUM_MCP_SERVER_URL || "http://127.0.0.1:3000/api/mcp/medium";
+process.env.MEDIUM_MCP_SERVER_CMD =
+  process.env.MEDIUM_MCP_SERVER_CMD || "python3 -m target_prefetch.medium_mcp_server --stdio";
+
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+async function runPythonMediumMcpRpc(rpcPayload: any): Promise<any> {
+  const { stdout } = await execFileAsync(
+    "python3",
+    ["-m", "target_prefetch.medium_mcp_server", "--rpc", JSON.stringify(rpcPayload)],
+    {
+      cwd: __dirname,
+      timeout: 15000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env },
+    }
+  );
+  return JSON.parse(stdout.trim());
+}
 
 // Initialize server-side Gemini client with mandatory User-Agent header
 function getGenAIClient(): GoogleGenAI | null {
@@ -32,8 +52,8 @@ function getGenAIClient(): GoogleGenAI | null {
 async function runPythonAdkCli(args: string[]): Promise<any> {
   const { stdout } = await execFileAsync("python3", ["-m", "adk_pipeline.cli", ...args], {
     cwd: __dirname,
-    timeout: 20000,
-    maxBuffer: 10 * 1024 * 1024,
+    timeout: 60000,
+    maxBuffer: 50 * 1024 * 1024,
   });
   return JSON.parse(stdout.trim());
 }
@@ -41,8 +61,8 @@ async function runPythonAdkCli(args: string[]): Promise<any> {
 async function runPythonTargetPrefetchCli(args: string[]): Promise<any> {
   const { stdout } = await execFileAsync("python3", ["-m", "target_prefetch.cli", ...args], {
     cwd: __dirname,
-    timeout: 20000,
-    maxBuffer: 10 * 1024 * 1024,
+    timeout: 60000,
+    maxBuffer: 50 * 1024 * 1024,
   });
   return JSON.parse(stdout.trim());
 }
@@ -50,8 +70,8 @@ async function runPythonTargetPrefetchCli(args: string[]): Promise<any> {
 async function runPythonTargetAgentCli(args: string[]): Promise<any> {
   const { stdout } = await execFileAsync("python3", ["-m", "target_agent.cli", ...args], {
     cwd: __dirname,
-    timeout: 20000,
-    maxBuffer: 10 * 1024 * 1024,
+    timeout: 60000,
+    maxBuffer: 50 * 1024 * 1024,
   });
   return JSON.parse(stdout.trim());
 }
@@ -59,8 +79,8 @@ async function runPythonTargetAgentCli(args: string[]): Promise<any> {
 async function runPythonMatchingAgentCli(args: string[]): Promise<any> {
   const { stdout } = await execFileAsync("python3", ["-m", "matching_agent.cli", ...args], {
     cwd: __dirname,
-    timeout: 25000,
-    maxBuffer: 10 * 1024 * 1024,
+    timeout: 60000,
+    maxBuffer: 50 * 1024 * 1024,
   });
   return JSON.parse(stdout.trim());
 }
@@ -76,7 +96,7 @@ async function enrichWithMatchingAndCommercialAgent(matchingResult: any): Promis
     return matchingResult;
   }
 
-  const compactMatches = matchingResult.ranked_matches.map((m: any) => ({
+  const compactMatches = matchingResult.ranked_matches.slice(0, 10).map((m: any) => ({
     patent_number: m.patent_number,
     patent_title: m.patent_title,
     patent_description: m.patent_description,
@@ -387,8 +407,8 @@ async function enrichWithPatentAnalysisAgent(
     return pipelineData;
   }
 
-  // Construct compact, evidence-only input for patent_analysis_agent
-  const candidatePrompts = pipelineData.patents.map((p: any) => ({
+  // Construct compact, evidence-only input for patent_analysis_agent (top 10 when max_candidates is 50-100 to prevent quota/token exhaustion)
+  const candidatePrompts = pipelineData.patents.slice(0, 10).map((p: any) => ({
     patent_number: p.patent_number,
     title: p.title,
     abstract_source_fact: p.abstract_source_fact,
@@ -578,7 +598,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "25mb" }));
 
   // 1. Inspect Google Patents Public Dataset Schema (`patents-public-data.patents.publications`)
   app.get("/api/schema", async (req, res) => {
@@ -725,6 +745,64 @@ async function startServer() {
     }
   });
 
+  // Local Medium MCP Server (medium-2) — JSON-RPC 2.0 HTTP Transport (MEDIUM_MCP_SERVER_URL)
+  app.get("/api/mcp/medium", async (_req, res) => {
+    try {
+      const [initResp, toolsResp] = await Promise.all([
+        runPythonMediumMcpRpc({
+          jsonrpc: "2.0",
+          id: "mcp_init_discovery",
+          method: "initialize",
+          params: { protocolVersion: "2024-11-05" },
+        }),
+        runPythonMediumMcpRpc({
+          jsonrpc: "2.0",
+          id: "mcp_tools_discovery",
+          method: "tools/list",
+          params: {},
+        }),
+      ]);
+      res.json({
+        status: "ONLINE",
+        env: {
+          MEDIUM_MCP_SERVER_URL: process.env.MEDIUM_MCP_SERVER_URL,
+          MEDIUM_MCP_SERVER_CMD: process.env.MEDIUM_MCP_SERVER_CMD,
+        },
+        initialize: initResp,
+        tools_list: toolsResp,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        status: "ERROR",
+        error: error?.message || "Failed to query local Medium MCP Server.",
+      });
+    }
+  });
+
+  app.post("/api/mcp/medium", async (req, res) => {
+    try {
+      const rpcRequest = req.body && Object.keys(req.body).length > 0
+        ? req.body
+        : {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/list",
+            params: {},
+          };
+      const rpcResponse = await runPythonMediumMcpRpc(rpcRequest);
+      res.json(rpcResponse);
+    } catch (error: any) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        id: req.body?.id ?? null,
+        error: {
+          code: -32603,
+          message: error?.message || "Internal Medium MCP JSON-RPC error",
+        },
+      });
+    }
+  });
+
   // 6. Execute Patent–Target Matching & Commercial Opportunity Agent Pipeline (Google ADK)
   app.post("/api/analyze-patent-target-matching", async (req, res) => {
     try {
@@ -771,15 +849,21 @@ async function startServer() {
     }
   });
 
-  // 2. Execute Client Patent Analysis Pipeline (root_agent -> retrieval -> analysis -> ranking)
+  // 2. Execute Unified Client Patent & Target Matching Analysis Pipeline
   app.post("/api/analyze-client-patents", async (req, res) => {
     try {
       const {
         client_company = "",
+        target_company = "Netflix",
         technology_area = "",
         max_candidates = 6,
         use_llm = true,
       } = req.body || {};
+
+      const cleanTargetCompany =
+        String(target_company || "Netflix")
+          .replace(/,\s*Inc\.?$/i, "")
+          .trim() || "Netflix";
 
       const args = [
         "--action",
@@ -793,17 +877,90 @@ async function startServer() {
       ];
 
       let pipelineResult = await runPythonAdkCli(args);
+      let matchingResult: any = null;
 
-      if (pipelineResult.pipeline_status === "SUCCESS" && use_llm) {
-        pipelineResult = await enrichWithPatentAnalysisAgent(
-          pipelineResult,
-          technology_area ? String(technology_area) : undefined
-        );
+      if (pipelineResult.pipeline_status === "SUCCESS") {
+        // Run deterministic Patent-Target Matching immediately using the retrieved client patents
+        try {
+          const rawPatents = pipelineResult.patents || [];
+          const matchingPayload: Record<string, any> = {
+            client_company:
+              pipelineResult.resolved_assignee ||
+              pipelineResult.client_company ||
+              String(client_company),
+            target_company: cleanTargetCompany,
+            technology_area: String(technology_area || ""),
+            max_candidates: Number(max_candidates) || 6,
+          };
+          if (rawPatents.length > 0 && rawPatents.length <= 12) {
+            matchingPayload.client_patents = rawPatents;
+          }
+          matchingResult = await runPythonMatchingAgentCli([
+            "--action",
+            "run_matching",
+            "--payload_json",
+            JSON.stringify(matchingPayload),
+          ]);
+        } catch (mErr: any) {
+          matchingResult = {
+            matching_status: "PIPELINE_ERROR",
+            client_company: pipelineResult.client_company,
+            target_company: cleanTargetCompany,
+            technology_area: String(technology_area || ""),
+            error: mErr?.message || "Failed to execute Patent–Target Matching Pipeline.",
+            ranked_matches: [],
+          };
+        }
+
+        if (use_llm) {
+          const [enrichedClient, enrichedMatching] = await Promise.all([
+            enrichWithPatentAnalysisAgent(
+              pipelineResult,
+              technology_area ? String(technology_area) : undefined
+            ),
+            matchingResult && matchingResult.matching_status === "SUCCESS"
+              ? enrichWithMatchingAndCommercialAgent(matchingResult)
+              : Promise.resolve(matchingResult),
+          ]);
+          pipelineResult = enrichedClient;
+          matchingResult = enrichedMatching;
+        }
+
+        // Sync enriched patent fields into matchingResult.ranked_matches and append matching ADK trace
+        if (matchingResult && Array.isArray(matchingResult.ranked_matches)) {
+          const patByNum: Record<string, any> = {};
+          for (const p of pipelineResult.patents || []) {
+            patByNum[p.patent_number] = p;
+          }
+          for (const m of matchingResult.ranked_matches) {
+            const srcPat = patByNum[m.patent_number];
+            if (srcPat) {
+              m.patent_description = srcPat.technical_summary || m.patent_description;
+              m.patent_technology_areas = srcPat.technology_areas || m.patent_technology_areas;
+              m.patent_key_concepts = srcPat.key_concepts || m.patent_key_concepts;
+            }
+          }
+        }
+
+        if (
+          pipelineResult.adk_architecture?.agent_trace &&
+          matchingResult?.adk_architecture?.agent_trace
+        ) {
+          pipelineResult.adk_architecture.sub_agents = [
+            ...(pipelineResult.adk_architecture.sub_agents || []),
+            ...(matchingResult.adk_architecture.sub_agents || []),
+          ];
+          pipelineResult.adk_architecture.agent_trace = [
+            ...pipelineResult.adk_architecture.agent_trace,
+            ...matchingResult.adk_architecture.agent_trace,
+          ];
+        }
       }
 
       // Build the strict canonical output contract alongside the full pipeline telemetry
       const canonicalOutput = {
         client_company: pipelineResult.client_company,
+        target_company: cleanTargetCompany,
         technology_area: pipelineResult.technology_area || "optional",
         patents: (pipelineResult.patents || []).map((p: any) => ({
           patent_number: p.patent_number,
@@ -825,10 +982,14 @@ async function startServer() {
           },
           source: "Google Patents Public Dataset",
         })),
+        ranked_patent_product_matches:
+          matchingResult?.canonical_output?.ranked_patent_product_matches || [],
       };
 
       res.json({
         ...pipelineResult,
+        target_company: cleanTargetCompany,
+        matching_analysis: matchingResult,
         canonical_output: canonicalOutput,
       });
     } catch (error: any) {

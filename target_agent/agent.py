@@ -119,6 +119,86 @@ root_agent = SequentialAgent(
 
 DOCUMENTED_PRODUCT_MAPPING: List[Dict[str, Any]] = [
     {
+        "match_keywords": ["personalized video ranker", "pvr", "top-n", "page generation", "row ranker", "submodular", "calibrated", "kl-divergence", "interleaving"],
+        "technology": "Two-Stage Homepage Canvas Ranking & Calibrated Personalization",
+        "product_or_service": "Netflix Personalized Video Ranker (PVR), Top-N Ranker & 2D Page Generation Engine",
+        "capability_rules": [
+            (
+                "pvr",
+                "Executes Personalized Video Ranker (PVR) and Top-N Video Ranker blending personalized member embeddings with row-specific genre/theme features and Caret explanations.",
+            ),
+            (
+                "page generation",
+                "Constructs two-dimensional homepage canvases via stage-wise submodular row/column optimization with cross-row title deduplication and horizontal/vertical position bias correction.",
+            ),
+            (
+                "calibrated",
+                "Applies Kullback-Leibler (KL) divergence calibration and multi-objective Pareto scalarization to match recommended genre distributions to historical member viewing profiles while optimizing retention utility.",
+            ),
+            (
+                "interleaving",
+                "Evaluates candidate ranking algorithms online using Team-Draft and Probabilistic Interleaving with 10x–100x higher statistical sensitivity than traditional A/B tests.",
+            ),
+        ],
+    },
+    {
+        "match_keywords": ["contextual bandit", "bandits", "ava", "artwork", "linucb", "thompson sampling", "inverse propensity", "ipw"],
+        "technology": "Contextual Bandits & Automated Visual Artwork Personalization",
+        "product_or_service": "Netflix Contextual Bandit Artwork Personalization & AVA Visual Discovery Engine",
+        "capability_rules": [
+            (
+                "bandit",
+                "Selects personalized title artwork per member profile using contextual multi-armed bandits (LinUCB and Thompson Sampling) conditioned on member genre/visual history and device viewport.",
+            ),
+            (
+                "ipw",
+                "Logs action selection propensities and evaluates policy updates offline using Inverse Propensity Weighting (IPW) and Doubly Robust (DR) counterfactual estimators.",
+            ),
+            (
+                "ava",
+                "Extracts candidate video frames via Automated Visual Aesthetics (AVA) deep CNN scoring for actor facial prominence, motion stability, and visual composition.",
+            ),
+        ],
+    },
+    {
+        "match_keywords": ["foundation model", "session-based", "sequential", "hydra", "axion", "evcache", "in-session", "autoregressive"],
+        "technology": "Foundation Models, Sequential Session Intent & Real-Time Feature Store",
+        "product_or_service": "Netflix Foundation Recommendation Model (Hydra) & Axion Real-Time Session Ranker",
+        "capability_rules": [
+            (
+                "foundation",
+                "Encodes chronological member interaction sequences (plays, completion ratios, searches, row scrolls) via autoregressive causal Transformers and Hydra multi-task shared backbones.",
+            ),
+            (
+                "session",
+                "Combines long-term member embeddings with short-term in-session Transformer attention states to adapt row rankings within sub-second latency.",
+            ),
+            (
+                "axion",
+                "Streams real-time interaction events through Apache Kafka, Apache Flink, and EVCache/Axion feature stores with point-in-time time-travel correctness.",
+            ),
+        ],
+    },
+    {
+        "match_keywords": ["collaborative filtering", "two-tower", "graphsage", "bipartite", "lexical", "semantic search", "bi-encoder", "cross-encoder"],
+        "technology": "Neural Candidate Generation, Graph Cold-Start & Multimodal Search",
+        "product_or_service": "Netflix Two-Tower ANN Candidate Retriever, GraphSAGE & Personalized Search Engine",
+        "capability_rules": [
+            (
+                "two-tower",
+                "Projects member context and catalog titles into a shared dense embedding space for sub-10ms approximate nearest neighbor (ANN / ScaNN / HNSW) candidate retrieval.",
+            ),
+            (
+                "graph",
+                "Propagates relational embeddings across bipartite member-title-talent graphs via GraphSAGE message passing to resolve cold-start ranking for new launches.",
+            ),
+            (
+                "search",
+                "Executes hybrid lexical token matching, multilingual bi-encoder semantic retrieval, and personalized cross-encoder re-ranking for partial and natural-language queries.",
+            ),
+        ],
+    },
+    {
         "match_keywords": ["open connect", "oca", "bgp", "cache fill", "appliance", "ixp", "pacing", "freebsd"],
         "technology": "Content Delivery & Edge Caching Infrastructure",
         "product_or_service": "Netflix Open Connect / Open Connect Appliances (OCAs)",
@@ -180,32 +260,6 @@ DOCUMENTED_PRODUCT_MAPPING: List[Dict[str, Any]] = [
             (
                 "lip-sync",
                 "Applies presentation timestamp (PTS) edit-list alignment across fragmented ISOBMFF / CMAF tracks to prevent audio-video lip-sync drift during ABR switches.",
-            ),
-        ],
-    },
-    {
-        "match_keywords": ["recommender", "personalization", "top-n", "ranker", "experimentation", "search"],
-        "technology": "Personalization, Search & A/B Experimentation",
-        "product_or_service": "Netflix Recommender System & Experimentation Platform",
-        "capability_rules": [
-            (
-                "ranker",
-                "Combines Personalized Video Ranker (PVR), Top-N Video Ranker, and row generation models using watch history and search query embeddings.",
-            ),
-            (
-                "experimentation",
-                "Validates ranking and playback algorithms via large-scale A/B experimentation telemetry.",
-            ),
-        ],
-    },
-    {
-        "match_keywords": ["keystone", "kafka", "flink", "iceberg", "event streaming"],
-        "technology": "Real-Time Telemetry & Stream Data Infrastructure",
-        "product_or_service": "Netflix Keystone Stream Processing Pipeline",
-        "capability_rules": [
-            (
-                "keystone",
-                "Ingests client QoE buffer telemetry, bitrate switches, and CDN error events via Apache Kafka and Apache Flink into real-time steering databases.",
             ),
         ],
     },
@@ -330,6 +384,7 @@ def execute_target_retrieval_pipeline(
     # Step 2: Execute `search_target_knowledge` across all generated queries
     query_execution_log: List[Dict[str, Any]] = []
     chunks_by_id: Dict[str, Dict[str, Any]] = {}
+    dynamic_target_fetch_events: List[Dict[str, Any]] = []
     company_missing = False
 
     for q_item in planned_queries:
@@ -343,11 +398,19 @@ def execute_target_retrieval_pipeline(
         if search_res["status"] == "COMPANY_NOT_IN_KNOWLEDGE_BASE":
             company_missing = True
 
+        dyn_event = search_res.get("dynamic_fetch_and_embedding")
+        if dyn_event and dyn_event.get("dynamically_fetched_docs", 0) > 0:
+            dynamic_target_fetch_events.append({
+                "query": q_str,
+                **dyn_event,
+            })
+
         query_execution_log.append({
             "query": q_str,
             "rationale": q_item["rationale"],
             "returned_count": len(search_res.get("results", [])),
             "top_chunk_ids": [r["chunk_id"] for r in search_res.get("results", [])],
+            "dynamic_fetch_triggered": bool(dyn_event and dyn_event.get("dynamically_fetched_docs", 0) > 0),
         })
 
         for r in search_res.get("results", []):
@@ -371,12 +434,17 @@ def execute_target_retrieval_pipeline(
 
     adk_trace.append({
         "agent": "target_retrieval_agent",
-        "step": "Step 1B — Offline Knowledge Base Multi-Query Search",
+        "step": "Step 1B — AlloyDB Vector & Hybrid Knowledge Base Search (text-embedding-004)",
         "tool": "search_target_knowledge",
         "status": "COMPANY_NOT_FOUND" if company_missing else ("COMPLETED" if deduped_chunks else "INSUFFICIENT_EVIDENCE"),
         "summary": (
-            f"Executed {len(planned_queries)} queries against pre-fetched `target_knowledge.sqlite` (0 web requests); "
-            f"retrieved {len(deduped_chunks)} unique evidence chunks."
+            f"Executed {len(planned_queries)} queries against AlloyDB `document_chunks` using 768-d `text-embedding-004` "
+            f"cosine similarity + lexical matching; retrieved {len(deduped_chunks)} unique evidence chunks."
+            + (
+                f" Triggered dynamic Netflix documentation fetching & `text-embedding-004` embedding into AlloyDB ({sum(e.get('dynamically_fetched_docs', 0) for e in dynamic_target_fetch_events)} new doc(s), {sum(e.get('dynamically_embedded_chunks', 0) for e in dynamic_target_fetch_events)} embedded chunks)."
+                if dynamic_target_fetch_events
+                else ""
+            )
         ),
     })
 
@@ -456,6 +524,7 @@ def execute_target_retrieval_pipeline(
         "target_company": target_company,
         "technology_area": technology_area or "",
         "multi_query_log": query_execution_log,
+        "dynamic_fetch_and_embedding_events": dynamic_target_fetch_events,
         "retrieved_chunks": deduped_chunks,
         "technology_areas": technology_areas_out,
         "adk_architecture": {

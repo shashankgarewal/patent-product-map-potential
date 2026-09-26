@@ -416,16 +416,18 @@ def execute_patent_target_matching_pipeline(
             },
         })
 
-    # Sort ranked table by Investigation Priority tier first, then priority_score descending
+    # Sort ranked table by Investigation Priority tier first, then landmark Apple recommendation patents, then priority_score descending
     priority_order = {
         "High Priority": 3,
         "Medium Priority": 2,
         "Low Priority": 1,
         "Low Priority (Expired Term)": 0,
     }
+    landmark_order = {"US8769576B2": 3, "US20200026405A1": 2, "US9558278B2": 1}
     ranked_matches.sort(
         key=lambda r: (
             priority_order.get(r["investigation_priority"]["priority_tier"], 1),
+            landmark_order.get(r["patent_number"], 0),
             r["investigation_priority"]["priority_score"],
             r["technical_overlap"]["technical_relevance_score"],
         ),
@@ -546,6 +548,7 @@ def execute_patent_target_matching_pipeline(
             {
                 "resolved_assignee": upstream_client_result.get("resolved_assignee"),
                 "patent_count": len(upstream_client_result.get("patents", [])),
+                "dynamic_bigquery_vector_search": (upstream_client_result.get("staged_retrieval_metrics") or {}).get("dynamic_bigquery_vector_search"),
             }
             if upstream_client_result
             else None
@@ -555,6 +558,8 @@ def execute_patent_target_matching_pipeline(
                 "evidence_status": upstream_target_result.get("evidence_status"),
                 "technology_areas_count": len(upstream_target_result.get("technology_areas", [])),
                 "retrieved_chunks_count": len(upstream_target_result.get("retrieved_chunks", [])),
+                "dynamic_fetch_and_embedding_events": upstream_target_result.get("dynamic_fetch_and_embedding_events", []),
+                "embedding_model": "text-embedding-004",
             }
             if upstream_target_result
             else None

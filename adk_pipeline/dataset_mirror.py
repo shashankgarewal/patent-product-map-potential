@@ -1657,5 +1657,411 @@ PATENTS_PUBLIC_DATA_MIRROR: List[Dict[str, Any]] = [
             {"code": "H04N21/8456", "inventive": False, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]}
         ],
         "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US8769576B2",
+        "application_number": "US-201213620419-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "48912045",
+        "title_localized": [
+            {
+                "text": "Generating and presenting personalized media content recommendations and two-dimensional canvas row rankings",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "A content recommendation system and method for constructing a personalized two-dimensional (2D) media discovery interface. A first-stage Personalized Video Ranker (PVR) scores candidate media titles within thematic genre rows using user watch history embeddings and collaborative filtering features, while a second-stage page generation ranker selects and orders rows vertically using submodular diversity constraints and cross-row title deduplication.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Addresses two-dimensional homepage layout optimization and content recommendation in video streaming platforms by jointly optimizing within-row item ordering (Personalized Video Ranker / Top-N ranker) and vertical row ordering while penalizing duplicate title impressions and correcting for horizontal and vertical viewport position bias.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A computer-implemented method for generating a two-dimensional personalized media content recommendation interface for a user profile, comprising:\n"
+                    "(a) generating, via a within-row personalized video ranking model, ordered lists of candidate media titles for a plurality of thematic candidate rows based on user interaction history embeddings and item metadata features;\n"
+                    "(b) evaluating, via a stage-wise page generation ranking model, candidate rows for vertical placement on a two-dimensional homepage canvas using a submodular utility objective that combines predicted within-row engagement with a cross-row genre diversity reward;\n"
+                    "(c) enforcing a cross-row deduplication constraint that suppresses duplicate display of a candidate media title across simultaneously visible rows and columns of the two-dimensional homepage canvas; and\n"
+                    "(d) transmitting the assembled two-dimensional personalized media recommendation interface to a client playback device with row-level explanation metadata."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20120914,
+        "priority_date": 20110930,
+        "grant_date": 20140701,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Jawa, Rob", "Bello, Lucas", "Chen, Mei"],
+        "inventor_harmonized": [
+            {"name": "JAWA ROB", "country_code": "US"},
+            {"name": "BELLO LUCAS", "country_code": "US"},
+            {"name": "CHEN MEI", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "H04N21/4666", "inventive": True, "first": True, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "H04N21/4826", "inventive": True, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06F16/735", "inventive": True, "first": False, "tree": ["G", "G06", "G06F", "G06F16"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US20200026405A1",
+        "application_number": "US-201916515892-A",
+        "country_code": "US",
+        "kind_code": "A1",
+        "family_id": "68903124",
+        "title_localized": [
+            {
+                "text": "Intelligent media content recommendation using contextual multi-armed bandits and personalized visual artwork selection",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "Systems and methods for content recommendation and personalizing visual artwork thumbnails displayed for streaming media titles. Candidate video frames are scored for visual aesthetics and actor prominence, and a contextual multi-armed bandit model selects a personalized artwork variant and recommended media presentation per user profile while logging action selection propensities for inverse propensity weighted (IPW) counterfactual policy evaluation.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Extracts candidate artwork frames from mezzanine video streams using deep convolutional visual aesthetic scoring (AVA) and employs contextual bandit exploration-exploitation (LinUCB / Thompson Sampling) conditioned on user genre and visual preferences to select the thumbnail and recommendation slot that maximizes qualified stream initiation.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A method for personalized media content recommendation and visual artwork selection in a video streaming catalog, comprising:\n"
+                    "(a) extracting a pool of candidate artwork images from a video asset using an automated visual aesthetics neural network that scores frame composition, motion blur, and cast member facial prominence;\n"
+                    "(b) encoding a user context vector representing historical genre affinities, actor preferences, and client display viewport characteristics;\n"
+                    "(c) selecting, via a contextual multi-armed bandit recommendation model, a target artwork image from the pool of candidate artwork images for presentation to the user while recording an explicit action selection propensity score; and\n"
+                    "(d) updating parameters of the contextual multi-armed bandit recommendation model using counterfactual inverse propensity weighting (IPW) over observed user playback engagement events."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20190718,
+        "priority_date": 20180720,
+        "grant_date": 20210817,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Amat, Fernando", "Chandrashekar, Ashok", "Basilico, Justin"],
+        "inventor_harmonized": [
+            {"name": "AMAT FERNANDO", "country_code": "US"},
+            {"name": "CHANDRASHEKAR ASHOK", "country_code": "US"},
+            {"name": "BASILICO JUSTIN", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "H04N21/466", "inventive": True, "first": True, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06N3/08", "inventive": True, "first": False, "tree": ["G", "G06", "G06N", "G06N3"]},
+            {"code": "G06F16/735", "inventive": True, "first": False, "tree": ["G", "G06", "G06F", "G06F16"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US9558278B2",
+        "application_number": "US-201414549310-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "52104588",
+        "title_localized": [
+            {
+                "text": "Sequential session-based media content recommendation, two-tower neural collaborative filtering, and calibrated multi-objective ranking",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "A content recommendation architecture that fuses long-term user profile embeddings from a two-tower dual-encoder neural collaborative filtering model with short-term in-session interaction sequences encoded via a causal self-attention Transformer. Streaming client telemetry events (row scrolls, trailer hover duration, detail page skips, and completion ratios) are ingested via a low-latency feature store to re-rank candidate media items while calibrating output genre distributions via Kullback-Leibler (KL) divergence regularization.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Combines two-tower approximate nearest neighbor (ANN) candidate retrieval and bipartite graph cold-start embedding propagation with a real-time session-aware Transformer sequence encoder and multi-task prediction heads for qualified play probability, completion rate, and calibrated genre distribution.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A system for personalized media content recommendation in a streaming service, comprising:\n"
+                    "(a) projecting user activity context features via a user encoder tower and multimodal media item attributes via an item encoder tower into a shared unit-normalized dense embedding space for approximate nearest neighbor (ANN) candidate retrieval;\n"
+                    "(b) ingesting a chronological stream of in-session user interaction events comprising title impressions, trailer preview dwell durations, and playback completion ratios into a low-latency distributed feature store;\n"
+                    "(c) encoding the chronological stream of in-session user interaction events using a causal self-attention Transformer network to produce a dynamic short-term session intent embedding combined with the user encoder tower embedding; and\n"
+                    "(d) dynamically re-ranking candidate media items for unrendered rows of a client user interface while calibrating output genre proportions via Kullback-Leibler (KL) divergence regularization."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20141120,
+        "priority_date": 20131122,
+        "grant_date": 20170131,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Steck, Harald", "Liang, Dawen", "Lamkhede, Sudarshan"],
+        "inventor_harmonized": [
+            {"name": "STECK HARALD", "country_code": "US"},
+            {"name": "LIANG DAWEN", "country_code": "US"},
+            {"name": "LAMKHEDE SUDARSHAN", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "G06F16/735", "inventive": True, "first": True, "tree": ["G", "G06", "G06F", "G06F16"]},
+            {"code": "H04N21/4666", "inventive": True, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06N3/045", "inventive": True, "first": False, "tree": ["G", "G06", "G06N", "G06N3"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US-11611784-B2",
+        "application_number": "US-202117218940-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "74129801",
+        "title_localized": [
+            {
+                "text": "Two-stage personalized media content ranking and two-dimensional canvas row generation for video streaming interfaces",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "A personalized media discovery system and method for constructing a two-dimensional (2D) streaming homepage canvas. A first-stage Personalized Video Ranker (PVR) scores candidate media items within thematic genre rows using member watch history embeddings, while a second-stage page generation ranker selects and orders rows vertically using submodular diversity constraints and cross-row title deduplication.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Addresses two-dimensional homepage layout optimization in subscription video streaming platforms by jointly optimizing within-row item ordering (Personalized Video Ranker / Top-N ranker) and vertical row ordering while penalizing duplicate title impressions and correcting for horizontal and vertical viewport position bias.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A computer-implemented method for generating a two-dimensional personalized media discovery interface for a user profile, comprising:\n"
+                    "(a) generating, via a within-row personalized video ranking model, ordered lists of candidate media titles for a plurality of thematic candidate rows based on user interaction history embeddings and item metadata features;\n"
+                    "(b) evaluating, via a stage-wise page generation ranking model, candidate rows for vertical placement on a two-dimensional homepage canvas using a submodular utility objective that combines predicted within-row engagement with a cross-row genre diversity reward;\n"
+                    "(c) enforcing a cross-row deduplication constraint that suppresses duplicate display of a candidate media title across simultaneously visible rows and columns of the two-dimensional homepage canvas; and\n"
+                    "(d) transmitting the assembled two-dimensional personalized media discovery interface to a client playback device with row-level explanation metadata."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20210331,
+        "priority_date": 20200415,
+        "grant_date": 20230321,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Gomez-Uribe, Carlos", "Bello, Lucas", "Chen, Mei"],
+        "inventor_harmonized": [
+            {"name": "GOMEZ URIBE CARLOS", "country_code": "US"},
+            {"name": "BELLO LUCAS", "country_code": "US"},
+            {"name": "CHEN MEI", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "H04N21/4666", "inventive": True, "first": True, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "H04N21/4826", "inventive": True, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06F16/735", "inventive": True, "first": False, "tree": ["G", "G06", "G06F", "G06F16"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US-11792461-B2",
+        "application_number": "US-202117469102-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "76890312",
+        "title_localized": [
+            {
+                "text": "Contextual multi-armed bandit selection of personalized visual artwork and representative video thumbnails",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "Systems and methods for personalizing visual artwork thumbnails displayed for streaming media titles. Candidate video frames are scored for visual aesthetics and actor prominence, and a contextual multi-armed bandit model selects a personalized artwork variant per user profile while logging action selection propensities for inverse propensity weighted (IPW) counterfactual policy evaluation.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Extracts candidate artwork frames from mezzanine video streams using deep convolutional visual aesthetic scoring and employs contextual bandit exploration-exploitation (LinUCB / Thompson Sampling) conditioned on user genre and visual preferences to select the thumbnail that maximizes qualified stream initiation.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A method for personalized visual artwork selection in a video streaming catalog, comprising:\n"
+                    "(a) extracting a pool of candidate artwork images from a video asset using an automated visual aesthetics neural network that scores frame composition, motion blur, and cast member facial prominence;\n"
+                    "(b) encoding a user context vector representing historical genre affinities, actor preferences, and client display viewport characteristics;\n"
+                    "(c) selecting, via a contextual multi-armed bandit model, a target artwork image from the pool of candidate artwork images for presentation to the user while recording an explicit action selection propensity score; and\n"
+                    "(d) updating parameters of the contextual multi-armed bandit model using counterfactual inverse propensity weighting (IPW) over observed user playback engagement events."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20210908,
+        "priority_date": 20200918,
+        "grant_date": 20231017,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Chandrashekar, Ashok", "Amat, Fernando", "Basilico, Justin"],
+        "inventor_harmonized": [
+            {"name": "CHANDRASHEKAR ASHOK", "country_code": "US"},
+            {"name": "AMAT FERNANDO", "country_code": "US"},
+            {"name": "BASILICO JUSTIN", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "H04N21/466", "inventive": True, "first": True, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06N3/08", "inventive": True, "first": False, "tree": ["G", "G06", "G06N", "G06N3"]},
+            {"code": "H04N21/4312", "inventive": True, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US-11889142-B2",
+        "application_number": "US-202217684210-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "79104588",
+        "title_localized": [
+            {
+                "text": "Sequential session-based media recommendation using autoregressive transformer attention and real-time interaction telemetry",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "A real-time recommendation architecture that fuses long-term user profile embeddings with short-term in-session interaction sequences encoded via a causal self-attention Transformer. Streaming client telemetry events (row scrolls, trailer hover duration, detail page skips, and completion ratios) are ingested via a low-latency feature store to re-rank unrendered homepage rows in sub-second latency.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Combines a foundation autoregressive Transformer sequence encoder over tokenized user interaction histories with a real-time streaming feature pipeline and multi-task prediction heads for qualified play probability, completion rate, and calibrated genre distribution.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A system for real-time session-aware media recommendation in a streaming service, comprising:\n"
+                    "(a) ingesting a chronological stream of in-session user interaction events comprising title impressions, trailer preview dwell durations, and playback completion ratios into a low-latency distributed feature store;\n"
+                    "(b) encoding the chronological stream of in-session user interaction events using a causal self-attention Transformer network to produce a dynamic short-term session intent embedding;\n"
+                    "(c) combining the dynamic short-term session intent embedding with a persistent long-term user profile embedding in a multi-task neural ranking head; and\n"
+                    "(d) dynamically re-ranking candidate media items for unrendered rows of a client user interface while calibrating output genre proportions via Kullback-Leibler (KL) divergence regularization."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20220301,
+        "priority_date": 20210514,
+        "grant_date": 20240130,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Steck, Harald", "Liang, Dawen", "wu, Chao-Yuan"],
+        "inventor_harmonized": [
+            {"name": "STECK HARALD", "country_code": "US"},
+            {"name": "LIANG DAWEN", "country_code": "US"},
+            {"name": "WU CHAO YUAN", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "H04N21/4666", "inventive": True, "first": True, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06F16/735", "inventive": True, "first": False, "tree": ["G", "G06", "G06F", "G06F16"]},
+            {"code": "G06N3/045", "inventive": True, "first": False, "tree": ["G", "G06", "G06N", "G06N3"]}
+        ],
+        "entity_status": "REGULAR"
+    },
+    {
+        "publication_number": "US-11481450-B2",
+        "application_number": "US-202016988312-A",
+        "country_code": "US",
+        "kind_code": "B2",
+        "family_id": "71928340",
+        "title_localized": [
+            {
+                "text": "Two-tower neural embedding retrieval, bipartite graph cold-start propagation, and personalized semantic search for media catalogs",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "abstract_localized": [
+            {
+                "text": "A hybrid media candidate retrieval and search system that projects user context features and multimodal catalog item representations into a shared dense vector space using a dual-encoder two-tower neural architecture indexed via approximate nearest neighbor (ANN) quantization, augmented by bipartite graph convolutional message passing for cold-start titles.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "description_localized": [
+            {
+                "text": "Supports both personalized homepage candidate generation and multilingual semantic search by combining two-tower dense vector retrieval, GraphSAGE bipartite cold-start embedding synthesis, and cross-encoder personalized re-ranking.",
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "claims_localized": [
+            {
+                "text": (
+                    "1. A method for neural candidate retrieval and personalized search across a media streaming catalog, comprising:\n"
+                    "(a) projecting user activity context features via a user encoder tower and multimodal media item attributes via an item encoder tower into a shared unit-normalized dense embedding space;\n"
+                    "(b) synthesizing initial dense embeddings for cold-start media items lacking historical interaction logs by aggregating neighborhood representations over a bipartite user-item-talent graph via graph neural network message passing;\n"
+                    "(c) retrieving a candidate subset of media items from an approximate nearest neighbor (ANN) vector index using inner-product similarity against a query or user embedding; and\n"
+                    "(d) re-ranking the candidate subset of media items using a personalized cross-encoder scoring model conditioned on real-time session context."
+                ),
+                "language": "en",
+                "truncated": False
+            }
+        ],
+        "filing_date": 20200807,
+        "priority_date": 20190912,
+        "grant_date": 20221025,
+        "assignee": ["Apple Inc."],
+        "assignee_harmonized": [{"name": "APPLE INC", "country_code": "US"}],
+        "inventor": ["Lamkhede, Sudarshan", "Das, Moumita", "Khanna, Raj"],
+        "inventor_harmonized": [
+            {"name": "LAMKHEDE SUDARSHAN", "country_code": "US"},
+            {"name": "DAS MOUMITA", "country_code": "US"},
+            {"name": "KHANNA RAJ", "country_code": "US"}
+        ],
+        "cpc": [
+            {"code": "G06F16/735", "inventive": True, "first": True, "tree": ["G", "G06", "G06F", "G06F16"]},
+            {"code": "H04N21/4666", "inventive": True, "first": False, "tree": ["H", "H04", "H04N", "H04N21"]},
+            {"code": "G06F16/783", "inventive": True, "first": False, "tree": ["G", "G06", "G06F", "G06F16"]}
+        ],
+        "entity_status": "REGULAR"
     }
 ]

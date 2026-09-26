@@ -22,6 +22,7 @@ from adk_pipeline.tools import (
     calculate_patent_life_tool,
     compute_investigation_relevance_tool,
     derive_publication_status,
+    embed_patent_content_tool,
 )
 
 # Import official Google ADK classes if installed in the Python environment;
@@ -222,6 +223,8 @@ def infer_baseline_technology_areas(title: str, abstract: str, cpc_codes: List[s
     areas: List[str] = []
     concepts: List[str] = []
 
+    if any(k in combined for k in ("recommendation", "personalized", "personalization", "ranking", "ranker", "canvas", "bandit", "artwork", "two-tower", "session-based", "submodular")) or "H04N21/466" in cpc_joined or "G06F16/735" in cpc_joined:
+        areas.append("Video Streaming > Recommendation & Personalization")
     if any(k in combined for k in ("adaptive bitrate", "abr", "manifest", "hls", "dash", "cmaf", "chunk")) or "H04N21/8456" in cpc_joined:
         areas.append("Video Streaming > Adaptive Streaming")
     if any(k in combined for k in ("edge", "content delivery", "cdn", "cache", "prefetch", "coalescing", "bgp", "origin")) or "H04L67/568" in cpc_joined:
@@ -240,6 +243,10 @@ def infer_baseline_technology_areas(title: str, abstract: str, cpc_codes: List[s
 
     # Key technical concepts extraction
     concept_patterns = [
+        ("Two-Stage Personalized Video Ranking (PVR) & 2D Canvas Row Generation", r"two-stage|personalized video rank|two-dimensional.*canvas|submodular"),
+        ("Contextual Multi-Armed Bandit Artwork & Thumbnail Personalization", r"contextual.*bandit|artwork|visual aesthetics|inverse propensity"),
+        ("Session-Based Autoregressive Transformer Intent Recommendation", r"session-based|autoregressive.*transformer|in-session.*interaction|kl.*divergence"),
+        ("Two-Tower Neural Embedding Retrieval & Graph Cold-Start Propagation", r"two-tower|approximate nearest neighbor|bipartite.*graph|cross-encoder"),
         ("Adaptive Bitrate (ABR) Control", r"adaptive bitrate|abr\b|bitrate ladder"),
         ("Client Buffer Telemetry (CMCD)", r"buffer occupancy|buffer telemetry|cmcd"),
         ("Low-Latency CMAF Chunked Delivery", r"cmaf|chunked transfer|incomplete live media"),
@@ -331,15 +338,21 @@ def execute_deterministic_adk_stages(
         technology_area=technology_area,
         max_candidates=max_candidates
     )
+    dyn_bq = stage2.get("dynamic_bigquery_vector_search") or {}
     agent_trace.append({
         "agent": "patent_retrieval_agent",
-        "step": "Step 1C — Stage 2: Candidate Metadata Screening",
+        "step": "Step 1C — Stage 2: Candidate Metadata & Vector Screening (text-embedding-004)",
         "tool": "retrieve_candidate_metadata_tool",
         "status": stage2["status"],
         "summary": (
-            f"Screened {stage2.get('total_portfolio_count', 0)} publications for {resolved_assignee}; "
-            f"selected {stage2.get('selected_candidate_count', 0)} candidates matching niche '{technology_area or 'All'}' "
-            f"(filtered out {stage2.get('filtered_out_count', 0)} non-matching records before LLM context)."
+            f"Screened {stage2.get('total_portfolio_count', 0)} publications for {resolved_assignee} using "
+            f"hybrid lexical + `text-embedding-004` (768-d) vector similarity; "
+            f"selected {stage2.get('selected_candidate_count', 0)} candidates matching niche '{technology_area or 'All'}'."
+            + (
+                f" Triggered dynamic BigQuery Vector Search (`VECTOR_SEARCH` with `text-embedding-004`) and fetched {dyn_bq.get('fetched_count', 0)} new patent(s): {', '.join(dyn_bq.get('fetched_publications', []))}."
+                if dyn_bq.get("triggered")
+                else ""
+            )
         )
     })
 
@@ -405,6 +418,14 @@ def execute_deterministic_adk_stages(
             cpc_codes=cand["cpc_codes"]
         )
         claim_elements = decompose_claim_elements_fallback(ind_claims)
+        ind_claim_texts = [c["text"] for c in ind_claims]
+        patent_embedding_meta = embed_patent_content_tool(
+            patent_number=pub_num,
+            title=cand["title"],
+            abstract=cand["abstract"],
+            independent_claims=ind_claim_texts,
+            claim_elements=claim_elements,
+        )
 
         baseline_ai = {
             "technical_summary": cand["abstract"],
@@ -432,9 +453,10 @@ def execute_deterministic_adk_stages(
             "technical_summary": baseline_ai["technical_summary"],
             "technology_areas": baseline_ai["technology_areas"],
             "key_concepts": baseline_ai["key_concepts"],
-            "independent_claims": [c["text"] for c in ind_claims],
+            "independent_claims": ind_claim_texts,
             "independent_claims_structured": ind_claims,
             "claim_elements": baseline_ai["claim_elements"],
+            "patent_embedding_metadata": patent_embedding_meta,
             "missing_claims_warning": claim_rec.get("missing_claims_warning"),
             "priority_date": cand["priority_date"],
             "filing_date": cand["filing_date"],
@@ -536,6 +558,9 @@ def execute_deterministic_adk_stages(
             "stage2_filtered_out_records": stage2["filtered_out_count"],
             "stage2_shortlisted_candidates": stage2["selected_candidate_count"],
             "stage3_full_claims_fetched": stage3["fetched_count"],
+            "embedding_model": "text-embedding-004",
+            "embedding_dimensions": 768,
+            "dynamic_bigquery_vector_search": stage2.get("dynamic_bigquery_vector_search"),
             "stage1_sql": resolution.get("stage1_sql"),
             "stage2_sql": stage2.get("stage2_sql"),
             "stage3_sql": stage3.get("stage3_sql")
